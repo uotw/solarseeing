@@ -69,8 +69,7 @@ The scoring model draws from:
 - **Swedish Solar Telescope, La Palma** — 67% of daytime turbulence in 0-500m layer
 - **Baikal Astrophysical Observatory** — daytime optical turbulence and wind speed distributions
 - **Cloudy Nights / SolarChat forums** — community experience with jet stream thresholds, site selection, and daytime seeing patterns
-- 
-![Solar Seeing Forecast Screenshot](screenshot.png)
+
 
 ## Tech Stack
 
@@ -110,6 +109,8 @@ This is a first-version scoring model that needs real-world validation. Contribu
 - **Scoring threshold refinements** — adjust the wind speed breakpoints based on empirical data
 - **Additional data sources** — temperature gradients, boundary layer height, humidity
 - **UI improvements** — mobile optimization, accessibility, additional visualizations
+  
+![Solar Seeing Forecast Screenshot](screenshot.jpg)
 
 ## License
 
