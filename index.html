@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solar Seeing Forecast</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='14' fill='%23fbbf24'/%3E%3Cg stroke='%23fbbf24' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='32' y1='4' x2='32' y2='12'/%3E%3Cline x1='32' y1='52' x2='32' y2='60'/%3E%3Cline x1='4' y1='32' x2='12' y2='32'/%3E%3Cline x1='52' y1='32' x2='60' y2='32'/%3E%3Cline x1='12.2' y1='12.2' x2='17.9' y2='17.9'/%3E%3Cline x1='46.1' y1='46.1' x2='51.8' y2='51.8'/%3E%3Cline x1='12.2' y1='51.8' x2='17.9' y2='46.1'/%3E%3Cline x1='46.1' y1='17.9' x2='51.8' y2='12.2'/%3E%3C/g%3E%3C/svg%3E">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #111111; font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const PRESSURE_LEVELS = [
+  { hpa: 850, alt: "4k ft", label: "850 hPa", weight: 0.40, color: "#22d3ee" },
+  { hpa: 700, alt: "9k ft", label: "700 hPa", weight: 0.25, color: "#818cf8" },
+  { hpa: 500, alt: "17k ft", label: "500 hPa", weight: 0.15, color: "#fb923c" },
+  { hpa: 250, alt: "32k ft", label: "250 hPa", weight: 0.20, color: "#f472b6" },
+];
+
+function windSpeedScore(speed_ms, hpa) {
+  /* 850 hPa: U-shaped — stagnant air bad (thermal plumes), moderate best, strong bad */
+  if (hpa === 850) {
+    if (speed_ms < 2) return 70;      /* too calm, thermals build */
+    if (speed_ms < 5) return 100;     /* optimal: gentle mixing */
+    if (speed_ms < 8) return 75;
+    if (speed_ms < 10) return 55;
+    if (speed_ms < 15) return 25;
+    return 5;
+  }
+  /* 700 hPa: summit-adjacent, strong predictor per Maidanak/MKWC */
+  if (hpa === 700) {
+    if (speed_ms < 5) return 100;
+    if (speed_ms < 8) return 85;
+    if (speed_ms < 12) return 60;
+    if (speed_ms < 15) return 35;
+    return 10;
+  }
+  /* 500 hPa: mid-tropo gap, weaker predictor */
+  if (hpa === 500) {
+    if (speed_ms < 8) return 100;
+    if (speed_ms < 15) return 70;
+    if (speed_ms < 20) return 45;
+    if (speed_ms < 30) return 20;
+    return 5;
+  }
+  /* 250 hPa: jet stream — Vernin 20 m/s threshold */
+  if (speed_ms < 10) return 100;
+  if (speed_ms < 20) return 75;       /* Vernin: <20 needed for sub-arcsec */
+  if (speed_ms < 30) return 45;
+  if (speed_ms < 40) return 20;
+  return 5;
+}
+
+function shearPenalty(layers) {
+  /* Penalize adjacent-layer wind shear: both speed difference and directional divergence.
+     Cn² ∝ S² (shear squared). Ri < 0.25 triggers Kelvin-Helmholtz instability.
+     Heuristic: penalize vector wind difference >15 m/s or direction change >90° between adjacent layers. */
+  var penalty = 0;
+  for (var i = 0; i < layers.length - 1; i++) {
+    var l1 = layers[i], l2 = layers[i + 1];
+    /* speed difference */
+    var dSpeed = Math.abs(l1.speed - l2.speed);
+    /* directional difference */
+    var dDir = Math.abs(l1.direction - l2.direction);
+    if (dDir > 180) dDir = 360 - dDir;
+    /* vector wind difference (approximate) */
+    var r1 = l1.direction * Math.PI / 180, r2 = l2.direction * Math.PI / 180;
+    var u1 = l1.speed * Math.sin(r1), v1 = l1.speed * Math.cos(r1);
+    var u2 = l2.speed * Math.sin(r2), v2 = l2.speed * Math.cos(r2);
+    var vectorDiff = Math.sqrt((u2 - u1) * (u2 - u1) + (v2 - v1) * (v2 - v1));
+
+    /* Penalties scale with shear magnitude */
+    if (vectorDiff > 30) penalty += 10;
+    else if (vectorDiff > 20) penalty += 6;
+    else if (vectorDiff > 15) penalty += 3;
+
+    if (dDir > 120) penalty += 6;
+    else if (dDir > 90) penalty += 3;
+    else if (dDir > 60) penalty += 1;
+  }
+  return Math.min(penalty, 35);  /* cap total penalty */
+}
+
+function computeSeeingScore(layers) {
+  var ws = 0;
+  layers.forEach(function(l) { ws += windSpeedScore(l.speed, l.hpa) * l.weight; });
+  return Math.max(0, Math.min(100, Math.round(ws - shearPenalty(layers))));
+}
+
+function scoreColor(s) { if (s>=80) return "#22c55e"; if (s>=65) return "#eab308"; if (s>=45) return "#f97316"; if (s>=25) return "#ef4444"; return "#991b1b"; }
+function scoreText(s) { if (s>=80) return "Excellent"; if (s>=65) return "Good"; if (s>=45) return "Decent"; if (s>=25) return "Poor"; return "Bad"; }
+function scoreHue(s) { return (s/100)*120; }
+function dirLabel(d) { var a=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"]; return a[Math.round(d/22.5)%16]; }
+function fmtH(t) { var h=new Date(t).getHours(); return (h%12||12)+(h>=12?"p":"a"); }
+function fmtDate(t) { return new Date(t).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); }
+
+function SeeingChart({ hours, selectedIdx, onSelect, currentIdx }) {
+  var cH = 140;
+  return (
+    <div style={{ width:"100%", overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
+      <div style={{ display:"flex", alignItems:"flex-end", height:cH+32, minWidth: hours.length*34, padding:"0 2px" }}>
+        {hours.map(function(h,i) {
+          var bH = Math.max(4, (h.score/100)*cH);
+          var hue = scoreHue(h.score);
+          var sel = i===selectedIdx;
+          var cur = i===currentIdx;
+          return (
+            <div key={i} onClick={function(){onSelect(i)}} style={{
+              flex:1, display:"flex", flexDirection:"column", alignItems:"center", cursor:"pointer", minWidth:28, padding:"2px 1px 0",
+              background: sel ? "rgba(255,255,255,0.06)" : "transparent",
+              borderRadius: 6,
+              transition: "background 0.15s",
+            }}>
+              <div style={{ display:"flex", alignItems:"center", gap:2, marginBottom:2 }}>
+                <span style={{ fontSize:9, fontWeight:700, color: "hsl("+hue+",60%,"+(sel?"60%":"45%")+")", fontFamily:"'JetBrains Mono',monospace", transition:"color 0.15s" }}>{h.score}</span>
+                {h.effCloud>=25 && <i className={h.effCloud>=75?"fa-solid fa-cloud":"fa-solid fa-cloud-sun"} style={{ fontSize:6, color: h.effCloud>=75?"#ef4444":h.effCloud>=50?"#f97316":"#eab308", opacity:0.7 }}></i>}
+              </div>
+              <div style={{
+                width:"100%", maxWidth:26, height:bH, borderRadius:3,
+                background: "hsl("+hue+",55%,"+(sel?"42%":"32%")+")",
+                border: cur ? "2px solid rgba(239,239,239,0.7)" : "none",
+                transition:"all 0.15s",
+              }}>
+              </div>
+              <span style={{ fontSize:8, marginTop:3, color: cur?"#efefef": sel?"#cbd5e1":"#64748b", fontFamily:"'JetBrains Mono',monospace", fontWeight: cur?700:400 }}>{fmtH(h.time)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WindLayerChart({ allHours, selectedIdx, onSelect }) {
+  if (!allHours || allHours.length === 0) return null;
+  var padL = 35; /* left padding for y-axis labels */
+  var padR = 10;
+  var padT = 8;
+  var padB = 18; /* bottom for x-axis labels */
+  var cH = 100;
+  var totalW = 600; /* fixed internal SVG width */
+  var plotW = totalW - padL - padR;
+  /* find max wind speed across all layers and hours for scaling */
+  var maxWind = 0;
+  allHours.forEach(function(h) { h.layers.forEach(function(l) { if (l.speed > maxWind) maxWind = l.speed; }); });
+  maxWind = Math.max(maxWind, 10);
+  var stepX = plotW / (allHours.length - 1 || 1);
+
+  function hourX(i) { return padL + i * stepX; }
+  function speedY(s) { return padT + cH - (s / maxWind) * cH; }
+
+  function makePath(layerIdx) {
+    var pts = allHours.map(function(h, i) {
+      var x = hourX(i);
+      var y = speedY(h.layers[layerIdx].speed);
+      return (i === 0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1);
+    });
+    return pts.join(" ");
+  }
+
+  function handleClick(evt) {
+    if (!onSelect) return;
+    var svg = evt.currentTarget;
+    var rect = svg.getBoundingClientRect();
+    /* Map pixel click to SVG x coordinate */
+    var svgX = (evt.clientX - rect.left) / rect.width * totalW;
+    /* Convert to hour index */
+    var plotX = svgX - padL;
+    var idx = Math.round(plotX / stepX);
+    idx = Math.max(0, Math.min(allHours.length - 1, idx));
+    onSelect(idx);
+  }
+
+  /* compute total vector shear per hour (sum of adjacent-layer shear) */
+  var shearPairs = [[0,1],[1,2],[2,3]]; /* 850-700, 700-500, 500-250 */
+  var shearPerHour = allHours.map(function(h) {
+    var total = 0;
+    shearPairs.forEach(function(p) {
+      var l1 = h.layers[p[0]], l2 = h.layers[p[1]];
+      var r1 = l1.direction * Math.PI / 180, r2 = l2.direction * Math.PI / 180;
+      var du = l2.speed * Math.sin(r2) - l1.speed * Math.sin(r1);
+      var dv = l2.speed * Math.cos(r2) - l1.speed * Math.cos(r1);
+      total += Math.sqrt(du * du + dv * dv);
+    });
+    return total;
+  });
+  var maxShear = Math.max.apply(null, shearPerHour);
+  maxShear = Math.max(maxShear, 10);
+  /* scale shear to same Y axis as wind speed (map maxShear to maxWind) */
+  function shearY(s) { return padT + cH - (s / maxShear) * cH; }
+  var shearPath = shearPerHour.map(function(s, i) {
+    return (i === 0 ? "M" : "L") + hourX(i).toFixed(1) + "," + shearY(s).toFixed(1);
+  }).join(" ");
+
+  /* Y-axis labels */
+  var yTicks = [0, Math.round(maxWind * 0.5), Math.round(maxWind)];
+  var yTicksMph = yTicks.map(function(v) { return Math.round(v * 2.237); });
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 9, color: "#64748b", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>Wind Speed by Layer</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          {PRESSURE_LEVELS.map(function(pl) {
+            return <span key={pl.hpa} style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 8 }}>
+              <span style={{ width: 8, height: 3, borderRadius: 1, background: pl.color, display: "inline-block" }}></span>
+              <span style={{ color: "#94a3b8" }}>{pl.label}</span>
+            </span>;
+          })}
+          <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 8 }}>
+            <span style={{ width: 8, height: 0, borderTop: "2px dashed #ef4444", display: "inline-block" }}></span>
+            <span style={{ color: "#94a3b8" }}>Shear</span>
+          </span>
+        </div>
+      </div>
+      <div style={{ width: "100%" }}>
+        <svg viewBox={"0 0 " + totalW + " " + (cH + padT + padB)} preserveAspectRatio="none" style={{ width: "100%", height: cH + padT + padB + 10, display: "block", cursor: "pointer" }} onClick={handleClick}>
+          {/* Y-axis grid lines and labels */}
+          {yTicks.map(function(v, i) {
+            var y = speedY(v);
+            return <g key={i}>
+              <line x1={padL} y1={y} x2={totalW - padR} y2={y} stroke="rgba(255,255,255,0.06)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+              <text x={padL - 4} y={y + 3} textAnchor="end" fill="#475569" fontSize="8" fontFamily="'JetBrains Mono',monospace">{yTicksMph[i]}</text>
+            </g>;
+          })}
+          {/* mph label */}
+          <text x="6" y={padT + cH / 2} textAnchor="middle" fill="#334155" fontSize="7" fontFamily="'JetBrains Mono',monospace" transform={"rotate(-90,6," + (padT + cH / 2) + ")"}>mph</text>
+
+          {/* Shear filled area (subtle) */}
+          <path d={shearPath + " L" + hourX(allHours.length - 1).toFixed(1) + "," + (padT + cH) + " L" + hourX(0).toFixed(1) + "," + (padT + cH) + " Z"} fill="rgba(239,68,68,0.06)" />
+
+          {/* Layer lines */}
+          {PRESSURE_LEVELS.map(function(pl, li) {
+            return <path key={pl.hpa} d={makePath(li)} fill="none" stroke={pl.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.8" vectorEffect="non-scaling-stroke" />;
+          })}
+
+          {/* Shear line (dashed) */}
+          <path d={shearPath} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="4,3" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" vectorEffect="non-scaling-stroke" />
+
+          {/* Selected hour vertical line */}
+          {selectedIdx >= 0 && selectedIdx < allHours.length && (
+            <line x1={hourX(selectedIdx)} y1={padT} x2={hourX(selectedIdx)} y2={padT + cH} stroke="rgba(239,239,239,0.5)" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" vectorEffect="non-scaling-stroke" />
+          )}
+
+          {/* Selected hour dots */}
+          {selectedIdx >= 0 && selectedIdx < allHours.length && PRESSURE_LEVELS.map(function(pl, li) {
+            var x = hourX(selectedIdx);
+            var y = speedY(allHours[selectedIdx].layers[li].speed);
+            return <circle key={pl.hpa} cx={x} cy={y} r="4" fill={pl.color} stroke="#0f172a" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />;
+          })}
+
+          {/* Selected hour shear dot */}
+          {selectedIdx >= 0 && selectedIdx < allHours.length && (
+            <circle cx={hourX(selectedIdx)} cy={shearY(shearPerHour[selectedIdx])} r="3" fill="#ef4444" stroke="#0f172a" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.7" />
+          )}
+
+          {/* X-axis hour labels */}
+          {allHours.map(function(h, i) {
+            if (i % 2 !== 0 && allHours.length > 8) return null;
+            var x = hourX(i);
+            return <text key={i} x={x} y={padT + cH + 14} textAnchor="middle" fill={i===selectedIdx?"#efefef":"#475569"} fontSize="8" fontFamily="'JetBrains Mono',monospace" fontWeight={i===selectedIdx?700:400}>{fmtH(h.time)}</text>;
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function WindHeatMap({ allHours, selectedIdx, onSelect }) {
+  if (!allHours || allHours.length === 0) return null;
+  var rowH = 18;
+  var shearH = 6;
+  /* layers displayed bottom-to-top (850 at bottom = closest to ground, 250 at top = jet stream) */
+  var layerOrder = [3, 2, 1, 0]; /* 250, 500, 700, 850 from top to bottom */
+  /* adjacent pairs for shear bars (top-to-bottom): 250-500, 500-700, 700-850 */
+  var shearPairs = [[3, 2], [2, 1], [1, 0]];
+
+  function speedToColor(speed_ms, hpa) {
+    var score = windSpeedScore(speed_ms, hpa);
+    var hue = scoreHue(score);
+    var lightness = 18 + (score / 100) * 28;
+    var sat = 55 + (100 - score) * 0.35;
+    return "hsl(" + hue + "," + sat + "%," + lightness + "%)";
+  }
+
+  function layerShear(h, upperIdx, lowerIdx) {
+    var u = h.layers[upperIdx], lo = h.layers[lowerIdx];
+    /* vector wind difference */
+    var r1 = u.direction * Math.PI / 180, r2 = lo.direction * Math.PI / 180;
+    var du = u.speed * Math.sin(r1) - lo.speed * Math.sin(r2);
+    var dv = u.speed * Math.cos(r1) - lo.speed * Math.cos(r2);
+    return Math.sqrt(du * du + dv * dv);
+  }
+
+  /* find max shear for color scaling */
+  var maxShear = 0;
+  allHours.forEach(function(h) {
+    shearPairs.forEach(function(p) {
+      var s = layerShear(h, p[0], p[1]);
+      if (s > maxShear) maxShear = s;
+    });
+  });
+  maxShear = Math.max(maxShear, 10);
+
+  function shearToColor(shearVal) {
+    /* low shear = dim/transparent, high shear = bright warning */
+    var intensity = Math.min(1, shearVal / 30); /* normalize to ~30 m/s as "extreme" */
+    if (intensity < 0.2) return "rgba(34,197,94,0.15)";   /* green, very faint */
+    if (intensity < 0.4) return "rgba(234,179,8,0.3)";    /* yellow */
+    if (intensity < 0.6) return "rgba(249,115,22,0.5)";   /* orange */
+    if (intensity < 0.8) return "rgba(239,68,68,0.6)";    /* red */
+    return "rgba(239,68,68,0.85)";                         /* bright red */
+  }
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 9, color: "#64748b", marginBottom: 6, display: "flex", justifyContent: "space-between" }}>
+        <span>Wind Quality by Altitude</span>
+        <span style={{ fontSize: 7, color: "#475569" }}>bars = wind shear between layers</span>
+      </div>
+      <div style={{ display: "flex", width: "100%" }}>
+        {/* Y-axis labels */}
+        <div style={{ display: "flex", flexDirection: "column", marginRight: 4 }}>
+          {layerOrder.map(function(li, rowIdx) {
+            var pl = PRESSURE_LEVELS[li];
+            var items = [];
+            items.push(
+              <div key={"layer-"+li} style={{ height: rowH, display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+                <span style={{ fontSize: 7, color: "#64748b", fontFamily: "'JetBrains Mono',monospace", whiteSpace: "nowrap" }}>{pl.alt}</span>
+              </div>
+            );
+            /* add shear label spacer between layers (except after last) */
+            if (rowIdx < layerOrder.length - 1) {
+              items.push(
+                <div key={"shear-"+li} style={{ height: shearH }}></div>
+              );
+            }
+            return items;
+          })}
+        </div>
+        {/* Heat map grid */}
+        <div style={{ flex: 1 }}>
+          {layerOrder.map(function(li, rowIdx) {
+            var items = [];
+            /* wind speed row */
+            items.push(
+              <div key={"row-"+li} style={{ display: "flex", height: rowH, gap: 1 }}>
+                {allHours.map(function(h, hi) {
+                  var l = h.layers[li];
+                  var bg = speedToColor(l.speed, l.hpa);
+                  var isSel = hi === selectedIdx;
+                  return (
+                    <div key={hi} onClick={function() { if (onSelect) onSelect(hi); }}
+                      style={{
+                        flex: 1, background: bg, cursor: "pointer",
+                        borderRadius: 1,
+                        border: isSel ? "1.5px solid rgba(239,239,239,0.6)" : "0.5px solid rgba(0,0,0,0.3)",
+                        transition: "border 0.1s",
+                      }}>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+            /* shear bar between this layer and the next (except after last) */
+            if (rowIdx < layerOrder.length - 1) {
+              var upperIdx = layerOrder[rowIdx];
+              var lowerIdx = layerOrder[rowIdx + 1];
+              items.push(
+                <div key={"shear-"+li} style={{ display: "flex", height: shearH, gap: 1 }}>
+                  {allHours.map(function(h, hi) {
+                    var sv = layerShear(h, upperIdx, lowerIdx);
+                    var bg = shearToColor(sv);
+                    var isSel = hi === selectedIdx;
+                    return (
+                      <div key={hi} onClick={function() { if (onSelect) onSelect(hi); }}
+                        style={{
+                          flex: 1, background: bg, cursor: "pointer",
+                          borderRadius: 0,
+                          borderLeft: isSel ? "1.5px solid rgba(239,239,239,0.6)" : "none",
+                          borderRight: isSel ? "1.5px solid rgba(239,239,239,0.6)" : "none",
+                        }}>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            }
+            return items;
+          })}
+          {/* X-axis hour labels */}
+          <div style={{ display: "flex", height: 14, marginTop: 2 }}>
+            {allHours.map(function(h, i) {
+              if (i % 2 !== 0 && allHours.length > 8) return <div key={i} style={{ flex: 1 }}></div>;
+              return <div key={i} style={{ flex: 1, textAlign: "center" }}>
+                <span style={{ fontSize: 7, color: i === selectedIdx ? "#efefef" : "#475569", fontFamily: "'JetBrains Mono',monospace", fontWeight: i === selectedIdx ? 700 : 400 }}>{fmtH(h.time)}</span>
+              </div>;
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailPanel({ hour, allHours, selectedIdx, onSelect }) {
+  if (!hour) return null;
+  var hue = scoreHue(hour.score);
+  var windHue = scoreHue(hour.windScore);
+  var d = new Date(hour.time);
+  var ts = d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
+  var cloudPct = Math.round(hour.effCloud);
+  var cloudIcon = cloudPct<10?"fa-solid fa-sun":cloudPct<25?"fa-solid fa-sun":cloudPct<50?"fa-solid fa-cloud-sun":cloudPct<75?"fa-solid fa-cloud-sun":cloudPct<90?"fa-solid fa-cloud":"fa-solid fa-cloud-showers-heavy";
+  var cloudIconColor = cloudPct<10?"#fbbf24":cloudPct<25?"#eab308":cloudPct<50?"#eab308":cloudPct<75?"#f97316":cloudPct<90?"#94a3b8":"#64748b";
+  var cloudLabel = cloudPct<10?"Clear":cloudPct<25?"Mostly clear":cloudPct<50?"Partly cloudy":cloudPct<75?"Mostly cloudy":cloudPct<90?"Overcast":"Socked in";
+
+  return (
+    <div style={{ background:"rgba(255,255,255,0.025)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:10, padding:14, marginTop:12 }}>
+      {/* Top row: score, wind score, cloud */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <span style={{ fontSize:24, fontWeight:800, color:"hsl("+hue+",75%,55%)", fontFamily:"'JetBrains Mono',monospace" }}>{hour.score}</span>
+          <div>
+            <div style={{ fontSize:13, fontWeight:600, color:scoreColor(hour.score) }}>{scoreText(hour.score)}</div>
+            <div style={{ fontSize:11, color:"#64748b" }}>{ts}</div>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+          {hour.shearPenalty>0 && <span style={{ fontSize:10, color:"#f59e0b", fontFamily:"'JetBrains Mono',monospace", background:"rgba(245,158,11,0.1)", padding:"3px 7px", borderRadius:5 }}>Shear -{hour.shearPenalty}</span>}
+        </div>
+      </div>
+
+      {/* Wind + Cloud summary row */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:12 }}>
+        <div style={{ background:"rgba(255,255,255,0.03)", borderRadius:7, padding:"8px 10px", borderLeft:"3px solid hsl("+windHue+",70%,50%)" }}>
+          <div style={{ fontSize:9, color:"#64748b", textTransform:"uppercase", letterSpacing:0.5, marginBottom:2 }}>Wind Score</div>
+          <div style={{ display:"flex", alignItems:"baseline", gap:4 }}>
+            <span style={{ fontSize:18, fontWeight:700, color:"hsl("+windHue+",75%,55%)", fontFamily:"'JetBrains Mono',monospace" }}>{hour.windScore}</span>
+            <span style={{ fontSize:10, color:"#64748b" }}>/ 100</span>
+          </div>
+        </div>
+        <div style={{ background:"rgba(255,255,255,0.03)", borderRadius:7, padding:"8px 10px", borderLeft: cloudPct<25?"3px solid #22c55e":cloudPct<50?"3px solid #eab308":cloudPct<75?"3px solid #f97316":"3px solid #ef4444" }}>
+          <div style={{ fontSize:9, color:"#64748b", textTransform:"uppercase", letterSpacing:0.5, marginBottom:4 }}>Cloud Cover</div>
+          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6 }}>
+            <i className={cloudIcon} style={{ fontSize:14, color:cloudIconColor }}></i>
+            <span style={{ fontSize:15, fontWeight:700, color:"#e2e8f0", fontFamily:"'JetBrains Mono',monospace" }}>{cloudPct}%</span>
+            <span style={{ fontSize:10, color:"#64748b" }}>{cloudLabel}</span>
+          </div>
+          <div style={{ display:"flex", gap:8, fontSize:9 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+              <span style={{ color:"#64748b" }}>Low</span>
+              <span style={{ color: hour.cloudLow>50?"#ef4444":hour.cloudLow>25?"#f97316":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{Math.round(hour.cloudLow)}%</span>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+              <span style={{ color:"#64748b" }}>Mid</span>
+              <span style={{ color: hour.cloudMid>50?"#f97316":hour.cloudMid>25?"#eab308":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{Math.round(hour.cloudMid)}%</span>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+              <span style={{ color:"#64748b" }}>High</span>
+              <span style={{ color: hour.cloudHigh>50?"#eab308":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{Math.round(hour.cloudHigh)}%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Multi-layer wind speed chart */}
+      <WindLayerChart allHours={allHours} selectedIdx={selectedIdx} onSelect={onSelect} />
+
+      {/* Layer detail grid */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+        {hour.layers.map(function(l,i) {
+          var mph = (l.speed*2.237).toFixed(0);
+          var ls = windSpeedScore(l.speed,l.hpa);
+          var lh = scoreHue(ls);
+          var pl = PRESSURE_LEVELS[i];
+          return (
+            <div key={i} style={{ background:"rgba(255,255,255,0.02)", borderRadius:7, padding:"8px 10px", borderLeft:"3px solid "+pl.color }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                <span style={{ fontSize:11, color:"#94a3b8", fontFamily:"'JetBrains Mono',monospace" }}>{pl.alt}</span>
+                <span style={{ fontSize:9, color:"#475569" }}>{l.label}</span>
+              </div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
+                <span style={{ fontSize:15, fontWeight:700, color:"#e2e8f0", fontFamily:"'JetBrains Mono',monospace" }}>{mph}<span style={{fontSize:10,color:"#64748b"}}> mph</span></span>
+                <span style={{ fontSize:11, color:"#94a3b8" }}>{dirLabel(l.direction)} {Math.round(l.direction)}&deg;</span>
+              </div>
+              <div style={{ marginTop:5, height:3, borderRadius:2, background:"rgba(255,255,255,0.06)" }}>
+                <div style={{ width:ls+"%", height:"100%", borderRadius:2, background:"hsl("+lh+",70%,50%)" }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DayCard({ date, hours, isToday }) {
+  var nowH = new Date().getHours();
+  var curIdx = isToday ? hours.findIndex(function(h){return new Date(h.time).getHours()===nowH;}) : -1;
+  var best = hours.reduce(function(b,h){return h.score>b.score?h:b;},hours[0]);
+  var defIdx = curIdx>=0 ? curIdx : hours.indexOf(best);
+  var [sel, setSel] = useState(defIdx);
+  var dayAvg = Math.round(hours.reduce(function(s,h){return s+h.score;},0)/hours.length);
+
+  return (
+    <div style={{ background:"rgba(255,255,255,0.015)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:14, padding:"16px 16px 14px", marginBottom:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+        <div>
+          <span style={{ fontSize:15, fontWeight:700, color:"#f1f5f9" }}>{date}</span>
+          {isToday && <span style={{ fontSize:9, color:"#fbbf24", fontWeight:700, marginLeft:8, background:"rgba(251,191,36,0.15)", padding:"2px 6px", borderRadius:4 }}>TODAY</span>}
+        </div>
+        <div style={{ display:"flex", gap:14, alignItems:"center" }}>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:9,color:"#64748b",textTransform:"uppercase",letterSpacing:0.5}}>Best</div>
+            <div style={{fontSize:13,fontWeight:700,color:"hsl("+scoreHue(best.score)+",75%,55%)",fontFamily:"'JetBrains Mono',monospace"}}>{best.score} <span style={{fontSize:9,fontWeight:400,color:"#64748b"}}>{fmtH(best.time)}</span></div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:9,color:"#64748b",textTransform:"uppercase",letterSpacing:0.5}}>Avg</div>
+            <div style={{fontSize:13,fontWeight:700,color:scoreColor(dayAvg),fontFamily:"'JetBrains Mono',monospace"}}>{dayAvg}</div>
+          </div>
+        </div>
+      </div>
+      <SeeingChart hours={hours} selectedIdx={sel} onSelect={setSel} currentIdx={curIdx} />
+      <DetailPanel hour={hours[sel]} allHours={hours} selectedIdx={sel} onSelect={setSel} />
+    </div>
+  );
+}
+
+function App() {
+  var [data,setData]=useState(null), [loading,setLoading]=useState(true), [error,setError]=useState(null);
+  var [lat,setLat]=useState(35.08), [lon,setLon]=useState(-85.29), [loc,setLoc]=useState("Chattanooga, TN");
+  var [timeFilter,setTimeFilter]=useState("daylight"); /* "all", "daylight", "morning" */
+  var [selectedDay,setSelectedDay]=useState(0);
+
+  var fetchData = useCallback(function() {
+    setLoading(true); setError(null);
+    var ps=[]; [850,700,500,250].forEach(function(l){ps.push("wind_speed_"+l+"hPa","wind_direction_"+l+"hPa");});
+    ps.push("is_day","cloud_cover","cloud_cover_low","cloud_cover_mid","cloud_cover_high");
+    var url = "https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon
+      +"&hourly="+ps.join(",")
+      +"&daily=sunrise,sunset"
+      +"&wind_speed_unit=ms&timezone=auto&forecast_days=7&models=gfs_seamless";
+    fetch(url)
+    .then(function(r){if(!r.ok)throw new Error("API "+r.status);return r.json();})
+    .then(function(j){
+      if(j.error) throw new Error(j.reason||"API error");
+      /* Build sunrise lookup: date string -> sunrise hour */
+      var sunriseMap = {};
+      if (j.daily && j.daily.time && j.daily.sunrise) {
+        j.daily.time.forEach(function(dt, idx) {
+          var srTime = new Date(j.daily.sunrise[idx]);
+          sunriseMap[dt] = srTime.getHours();
+        });
+      }
+      var hrs=j.hourly.time.map(function(t,i){
+        var layers=PRESSURE_LEVELS.map(function(pl){return{hpa:pl.hpa,label:pl.label,alt:pl.alt,weight:pl.weight,speed:(j.hourly["wind_speed_"+pl.hpa+"hPa"]||[])[i]||0,direction:(j.hourly["wind_direction_"+pl.hpa+"hPa"]||[])[i]||0};});
+        var windScore=computeSeeingScore(layers);
+        var cloudTotal=(j.hourly.cloud_cover||[])[i]||0;
+        var cloudLow=(j.hourly.cloud_cover_low||[])[i]||0;
+        var cloudMid=(j.hourly.cloud_cover_mid||[])[i]||0;
+        var cloudHigh=(j.hourly.cloud_cover_high||[])[i]||0;
+        /* Effective cloud: low clouds block completely, mid mostly, high partially */
+        var effCloud = Math.min(100, cloudLow + cloudMid*0.8 + cloudHigh*0.3);
+        effCloud = Math.max(effCloud, cloudTotal); /* never better than total */
+        /* Cloud multiplier: SHG only needs a 2-min clear window, so partly cloudy is fine.
+           Clouds affect probability of getting a window, not image quality. */
+        var cloudMult = effCloud<10?1.0 : effCloud<30?0.95 : effCloud<50?0.9 : effCloud<70?0.8 : effCloud<85?0.5 : effCloud<95?0.2 : 0.05;
+        var finalScore = Math.round(windScore * cloudMult);
+        /* get sunrise hour for this date */
+        var dateStr = t.substring(0,10);
+        var sunriseHour = sunriseMap[dateStr] || 6;
+        return{time:t,isDay:j.hourly.is_day[i],layers:layers,windScore:windScore,
+          cloud:cloudTotal,cloudLow:cloudLow,cloudMid:cloudMid,cloudHigh:cloudHigh,effCloud:effCloud,
+          cloudMult:cloudMult,score:finalScore,shearPenalty:shearPenalty(layers),sunriseHour:sunriseHour};
+      });
+      setData(hrs); setLoading(false);
+    }).catch(function(e){setError(e.message);setLoading(false);});
+  },[lat,lon]);
+
+  useEffect(function(){fetchData();},[fetchData]);
+
+  var filt = data ? data.filter(function(h){
+    if (timeFilter==="morning") {
+      var hr=new Date(h.time).getHours();
+      return h.isDay===1 && hr>=h.sunriseHour && hr<=h.sunriseHour+4;
+    }
+    if (timeFilter==="daylight") return h.isDay===1;
+    return true;
+  }) : [];
+  var grp={}; filt.forEach(function(h){var k=fmtDate(h.time);if(!grp[k])grp[k]=[];grp[k].push(h);});
+  var todayStr = fmtDate(new Date().toISOString());
+
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(180deg,#111 0%,#161616 50%,#111 100%)",color:"#e2e8f0",padding:"20px 12px"}}>
+      <div style={{maxWidth:800,margin:"0 auto"}}>
+        <div style={{marginBottom:20,textAlign:"center"}}>
+          <div style={{fontSize:24,fontWeight:800,letterSpacing:"-0.5px",marginBottom:3}}><i className="fa-solid fa-sun" style={{color:"#fbbf24",marginRight:8}}></i>Solar Seeing Forecast</div>
+          <div style={{fontSize:11,color:"#64748b"}}>Multi-layer wind analysis for spectroheliograph imaging</div>
+        </div>
+        <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap",justifyContent:"center",alignItems:"center"}}>
+          <input value={loc} onChange={function(e){setLoc(e.target.value);}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,padding:"6px 10px",color:"#e2e8f0",fontSize:12,width:160,outline:"none"}} placeholder="Location"/>
+          <input type="number" step="0.01" value={lat} onChange={function(e){setLat(parseFloat(e.target.value));}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,padding:"6px 8px",color:"#e2e8f0",fontSize:12,width:90,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+          <input type="number" step="0.01" value={lon} onChange={function(e){setLon(parseFloat(e.target.value));}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,padding:"6px 8px",color:"#e2e8f0",fontSize:12,width:90,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+          <button onClick={fetchData} style={{background:"rgba(251,191,36,0.15)",border:"1px solid rgba(251,191,36,0.3)",borderRadius:7,padding:"6px 12px",color:"#fbbf24",fontSize:12,fontWeight:600,cursor:"pointer"}}>Refresh</button>
+        </div>
+        <div style={{display:"flex",justifyContent:"center",marginBottom:14}}>
+          <div style={{display:"flex",background:"rgba(255,255,255,0.04)",borderRadius:7,border:"1px solid rgba(255,255,255,0.08)",overflow:"hidden"}}>
+            {[["all","All Hours"],["daylight","Daylight"],["morning","Morning"]].map(function(opt){
+              var active = timeFilter===opt[0];
+              return <button key={opt[0]} onClick={function(){setTimeFilter(opt[0]);}}
+                style={{
+                  padding:"5px 14px",fontSize:11,fontWeight:active?600:400,cursor:"pointer",border:"none",
+                  background:active?"rgba(251,191,36,0.15)":"transparent",
+                  color:active?"#fbbf24":"#64748b",
+                  transition:"all 0.15s",
+                }}>{opt[1]}</button>;
+            })}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:12,flexWrap:"wrap",fontSize:10,color:"#64748b"}}>
+          <span style={{color:"#22c55e"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>80+ Excellent</span><span style={{color:"#eab308"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>65-79 Good</span><span style={{color:"#f97316"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>45-64 Decent</span><span style={{color:"#ef4444"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>25-44 Poor</span><span style={{color:"#991b1b"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>&lt;25 Bad</span>
+        </div>
+        <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",borderRadius:8,padding:10,marginBottom:20,fontSize:10,color:"#475569",lineHeight:1.5,textAlign:"center"}}>
+          Weighted: 850hPa 40% &middot; 700hPa 25% &middot; 500hPa 15% &middot; 250hPa 20% &middot; Shear penalty &middot; Cloud cover multiplier &middot; Tap bar for details
+        </div>
+
+        {loading && <div style={{textAlign:"center",padding:50,color:"#64748b",fontSize:13}}><i className="fa-solid fa-sun fa-spin" style={{fontSize:28,color:"#fbbf24",display:"block",marginBottom:12}}></i>Fetching forecast...</div>}
+        {error && <div style={{padding:16,color:"#ef4444",background:"rgba(239,68,68,0.05)",borderRadius:10,fontSize:12,wordBreak:"break-all"}}><strong>Error:</strong> {error}</div>}
+        {!loading && !error && data && (function(){
+          var entries = Object.entries(grp);
+          /* Weekly overview */
+          var weekData = entries.map(function(e) {
+            var date=e[0], hrs=e[1];
+            /* best score from the filtered hours shown */
+            var best = hrs.reduce(function(b,h){return h.score>b.score?h:b;},hrs[0]);
+            var dayAvg = Math.round(hrs.reduce(function(s,h){return s+h.score;},0)/hrs.length);
+            return {date:date, bestScore:best.score, bestTime:fmtH(best.time), avg:dayAvg, isToday:date===todayStr};
+          });
+          return (
+            <div>
+              {/* Week overview card — clickable day selector */}
+              <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,padding:"16px 16px 14px",marginBottom:20}}>
+                <div style={{fontSize:13,fontWeight:700,color:"#94a3b8",marginBottom:14,textAlign:"center"}}>7-Day Forecast &mdash; Best {timeFilter==="morning"?"Morning":timeFilter==="daylight"?"Daytime":""} Seeing</div>
+                <div style={{display:"flex",gap:4,alignItems:"flex-end",justifyContent:"center"}}>
+                  {weekData.map(function(d,i){
+                    var score = d.bestScore;
+                    var hue = scoreHue(score);
+                    var barH = Math.max(8, (score/100)*100);
+                    var dayName = d.date.split(",")[0];
+                    var isSel = i === selectedDay;
+                    return (
+                      <div key={i} onClick={function(){setSelectedDay(i)}} style={{
+                        display:"flex",flexDirection:"column",alignItems:"center",flex:1,maxWidth:90,cursor:"pointer",
+                        background: isSel ? "rgba(255,255,255,0.06)" : "transparent",
+                        borderRadius: 10, padding: "8px 4px 6px",
+                        transition:"background 0.2s",
+                      }}>
+                        {/* Score */}
+                        <span style={{fontSize:16,fontWeight:800,color:"hsl("+hue+",75%,55%)",fontFamily:"'JetBrains Mono',monospace",marginBottom:2}}>{score}</span>
+                        {/* Verdict */}
+                        <span style={{fontSize:8,fontWeight:600,color:"hsl("+hue+",60%,45%)",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>{scoreText(score)}</span>
+                        {/* Bar */}
+                        <div style={{width:"100%",maxWidth:50,height:barH,borderRadius:5,background:"hsl("+hue+",65%,"+(isSel?"42%":"32%")+")",transition:"all 0.3s"}} />
+                        {/* Best time */}
+                        <span style={{fontSize:9,color:"#64748b",marginTop:4,fontFamily:"'JetBrains Mono',monospace"}}>{d.bestTime}</span>
+                        {/* Day name */}
+                        <span style={{fontSize:10,fontWeight:isSel||d.isToday?700:500,color:isSel?"#efefef":d.isToday?"rgba(239,239,239,0.7)":"#94a3b8",marginTop:2}}>{dayName}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              {/* Single selected day card */}
+              {entries[selectedDay] && (
+                <DayCard key={entries[selectedDay][0]} date={entries[selectedDay][0]} hours={entries[selectedDay][1]} isToday={entries[selectedDay][0]===todayStr}/>
+              )}
+            </div>
+          );
+        })()}
+
+        <div style={{textAlign:"center",marginTop:28,padding:14,fontSize:9,color:"#334155",borderTop:"1px solid rgba(255,255,255,0.04)"}}>
+          Data: NOAA GFS via Open-Meteo &middot; Tuned for SHG solar imaging &middot; Image before 9 AM on 65+ days
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<App/>, document.getElementById("root"));
+</script>
+</body>
+</html>
