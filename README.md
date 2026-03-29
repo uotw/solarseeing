@@ -4,7 +4,7 @@
 
 A free, open-source solar seeing forecast tool for spectroheliograph and solar telescope imaging. Analyzes multi-layer atmospheric wind data to predict seeing conditions up to 7 days out.
 
-![Solar Seeing Forecast Screenshot](screenshot.jpg)
+<img src="screenshot.jpg" width="400" alt="Solar Seeing Forecast Screenshot">
 
 ## Why This Exists
 
