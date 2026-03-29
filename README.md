@@ -4,8 +4,6 @@
 
 A free, open-source solar seeing forecast tool for spectroheliograph and solar telescope imaging. Analyzes multi-layer atmospheric wind data to predict seeing conditions up to 7 days out.
 
-<img src="screenshot.jpg" width="400" alt="Solar Seeing Forecast Screenshot">
-
 ## Why This Exists
 
 Standard astronomical seeing forecasts (Clear Sky Chart, Astrospheric, Meteoblue) are designed for nighttime observing and don't reliably predict daytime seeing conditions. Daytime solar seeing is dominated by ground-layer convection — not the upper-atmosphere turbulence that nighttime tools model.
@@ -44,6 +42,10 @@ Each layer's wind speed is scored independently using thresholds derived from ob
 | 25-44 | Poor | Expect choppy reconstructions. Coarse detail only. |
 | < 25 | Bad | Jet stream overhead or heavy overcast. Skip it. |
 
+## Limitations
+
+This tool forecasts free-atmosphere and boundary layer wind conditions using GFS model data. It cannot account for hyperlocal effects that significantly impact daytime seeing, including ground-level thermal plumes from nearby surfaces (concrete, rooftops, asphalt), local humidity and dew point conditions, telescope tube currents, or site-specific terrain effects. These factors can easily add 1-2 arcseconds of degradation regardless of what the upper atmosphere is doing. The best scores in this tool should be read as "the atmosphere is cooperating" rather than "you will get great images." Good site selection and early morning timing are still essential.
+
 ## Features
 
 - **7-day forecast** with best score per day at a glance
@@ -67,6 +69,8 @@ The scoring model draws from:
 - **Swedish Solar Telescope, La Palma** — 67% of daytime turbulence in 0-500m layer
 - **Baikal Astrophysical Observatory** — daytime optical turbulence and wind speed distributions
 - **Cloudy Nights / SolarChat forums** — community experience with jet stream thresholds, site selection, and daytime seeing patterns
+- 
+![Solar Seeing Forecast Screenshot](screenshot.png)
 
 ## Tech Stack
 
