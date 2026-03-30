@@ -103,9 +103,13 @@ function scoreHue(s) { return (s/100)*120; }
 function dirLabel(d) { var a=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"]; return a[Math.round(d/22.5)%16]; }
 function fmtH(t) { var h=new Date(t).getHours(); return (h%12||12)+(h>=12?"p":"a"); }
 function fmtDate(t) { return new Date(t).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); }
+function fmtWind(ms, mph) { return mph ? Math.round(ms*2.237) : ms.toFixed(1); }
+function windUnit(mph) { return mph ? "mph" : "m/s"; }
 
 function SeeingChart({ hours, selectedIdx, onSelect, currentIdx }) {
   var cH = 140;
+  var [animated, setAnimated] = useState(false);
+  useEffect(function(){ var t=setTimeout(function(){setAnimated(true);},50); return function(){clearTimeout(t);}; },[]);
   return (
     <div style={{ width:"100%", overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
       <div style={{ display:"flex", alignItems:"flex-end", height:cH+32, minWidth: hours.length*34, padding:"0 2px" }}>
@@ -121,18 +125,18 @@ function SeeingChart({ hours, selectedIdx, onSelect, currentIdx }) {
               borderRadius: 6,
               transition: "background 0.15s",
             }}>
-              <div style={{ display:"flex", alignItems:"center", gap:2, marginBottom:2 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:2, marginBottom:2, opacity: animated?1:0, transition:"opacity 0.4s ease "+((i*0.03)+"s") }}>
                 <span style={{ fontSize:9, fontWeight:700, color: "hsl("+hue+",60%,"+(sel?"60%":"45%")+")", fontFamily:"'JetBrains Mono',monospace", transition:"color 0.15s" }}>{h.score}</span>
                 {h.effCloud>=25 && <i className={h.effCloud>=75?"fa-solid fa-cloud":"fa-solid fa-cloud-sun"} style={{ fontSize:6, color: h.effCloud>=75?"#ef4444":h.effCloud>=50?"#f97316":"#eab308", opacity:0.7 }}></i>}
               </div>
               <div style={{
-                width:"100%", maxWidth:26, height:bH, borderRadius:3,
+                width:"100%", maxWidth:26, height: animated?bH:0, borderRadius:3,
                 background: "hsl("+hue+",55%,"+(sel?"42%":"32%")+")",
                 border: cur ? "2px solid rgba(239,239,239,0.7)" : "none",
-                transition:"all 0.15s",
+                transition:"height 0.5s cubic-bezier(0.34,1.56,0.64,1) "+((i*0.03)+"s")+", background 0.15s",
               }}>
               </div>
-              <span style={{ fontSize:8, marginTop:3, color: cur?"#efefef": sel?"#cbd5e1":"#64748b", fontFamily:"'JetBrains Mono',monospace", fontWeight: cur?700:400 }}>{fmtH(h.time)}</span>
+              <span style={{ fontSize:8, marginTop:3, color: cur?"#efefef": sel?"#cbd5e1":"#64748b", fontFamily:"'JetBrains Mono',monospace", fontWeight: cur?700:400, opacity: animated?1:0, transition:"opacity 0.3s ease "+((i*0.03+0.2)+"s") }}>{fmtH(h.time)}</span>
             </div>
           );
         })}
@@ -141,7 +145,7 @@ function SeeingChart({ hours, selectedIdx, onSelect, currentIdx }) {
   );
 }
 
-function WindLayerChart({ allHours, selectedIdx, onSelect }) {
+function WindLayerChart({ allHours, selectedIdx, onSelect, useMph }) {
   if (!allHours || allHours.length === 0) return null;
   var padL = 35; /* left padding for y-axis labels */
   var padR = 10;
@@ -204,7 +208,7 @@ function WindLayerChart({ allHours, selectedIdx, onSelect }) {
 
   /* Y-axis labels */
   var yTicks = [0, Math.round(maxWind * 0.5), Math.round(maxWind)];
-  var yTicksMph = yTicks.map(function(v) { return Math.round(v * 2.237); });
+  var yTickLabels = yTicks.map(function(v) { return useMph ? Math.round(v * 2.237) : v.toFixed(0); });
 
   return (
     <div style={{ marginBottom: 10 }}>
@@ -230,11 +234,11 @@ function WindLayerChart({ allHours, selectedIdx, onSelect }) {
             var y = speedY(v);
             return <g key={i}>
               <line x1={padL} y1={y} x2={totalW - padR} y2={y} stroke="rgba(255,255,255,0.06)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-              <text x={padL - 4} y={y + 3} textAnchor="end" fill="#475569" fontSize="8" fontFamily="'JetBrains Mono',monospace">{yTicksMph[i]}</text>
+              <text x={padL - 4} y={y + 3} textAnchor="end" fill="#475569" fontSize="8" fontFamily="'JetBrains Mono',monospace">{yTickLabels[i]}</text>
             </g>;
           })}
           {/* mph label */}
-          <text x="6" y={padT + cH / 2} textAnchor="middle" fill="#334155" fontSize="7" fontFamily="'JetBrains Mono',monospace" transform={"rotate(-90,6," + (padT + cH / 2) + ")"}>mph</text>
+          <text x="6" y={padT + cH / 2} textAnchor="middle" fill="#334155" fontSize="7" fontFamily="'JetBrains Mono',monospace" transform={"rotate(-90,6," + (padT + cH / 2) + ")"}>{useMph?"mph":"m/s"}</text>
 
           {/* Shear filled area (subtle) */}
           <path d={shearPath + " L" + hourX(allHours.length - 1).toFixed(1) + "," + (padT + cH) + " L" + hourX(0).toFixed(1) + "," + (padT + cH) + " Z"} fill="rgba(239,68,68,0.06)" />
@@ -413,7 +417,7 @@ function WindHeatMap({ allHours, selectedIdx, onSelect }) {
   );
 }
 
-function DetailPanel({ hour, allHours, selectedIdx, onSelect }) {
+function DetailPanel({ hour, allHours, selectedIdx, onSelect, useMph }) {
   if (!hour) return null;
   var hue = scoreHue(hour.score);
   var windHue = scoreHue(hour.windScore);
@@ -474,12 +478,12 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect }) {
       </div>
 
       {/* Multi-layer wind speed chart */}
-      <WindLayerChart allHours={allHours} selectedIdx={selectedIdx} onSelect={onSelect} />
+      <WindLayerChart allHours={allHours} selectedIdx={selectedIdx} onSelect={onSelect} useMph={useMph} />
 
       {/* Layer detail grid */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
         {hour.layers.map(function(l,i) {
-          var mph = (l.speed*2.237).toFixed(0);
+          var windVal = fmtWind(l.speed, useMph);
           var ls = windSpeedScore(l.speed,l.hpa);
           var lh = scoreHue(ls);
           var pl = PRESSURE_LEVELS[i];
@@ -490,7 +494,7 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect }) {
                 <span style={{ fontSize:9, color:"#475569" }}>{l.label}</span>
               </div>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
-                <span style={{ fontSize:15, fontWeight:700, color:"#e2e8f0", fontFamily:"'JetBrains Mono',monospace" }}>{mph}<span style={{fontSize:10,color:"#64748b"}}> mph</span></span>
+                <span style={{ fontSize:15, fontWeight:700, color:"#e2e8f0", fontFamily:"'JetBrains Mono',monospace" }}>{windVal}<span style={{fontSize:10,color:"#64748b"}}> {windUnit(useMph)}</span></span>
                 <span style={{ fontSize:11, color:"#94a3b8" }}>{dirLabel(l.direction)} {Math.round(l.direction)}&deg;</span>
               </div>
               <div style={{ marginTop:5, height:3, borderRadius:2, background:"rgba(255,255,255,0.06)" }}>
@@ -504,7 +508,7 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect }) {
   );
 }
 
-function DayCard({ date, hours, isToday }) {
+function DayCard({ date, hours, isToday, useMph }) {
   var nowH = new Date().getHours();
   var curIdx = isToday ? hours.findIndex(function(h){return new Date(h.time).getHours()===nowH;}) : -1;
   var best = hours.reduce(function(b,h){return h.score>b.score?h:b;},hours[0]);
@@ -531,7 +535,7 @@ function DayCard({ date, hours, isToday }) {
         </div>
       </div>
       <SeeingChart hours={hours} selectedIdx={sel} onSelect={setSel} currentIdx={curIdx} />
-      <DetailPanel hour={hours[sel]} allHours={hours} selectedIdx={sel} onSelect={setSel} />
+      <DetailPanel hour={hours[sel]} allHours={hours} selectedIdx={sel} onSelect={setSel} useMph={useMph} />
     </div>
   );
 }
@@ -545,14 +549,33 @@ function App() {
   var [searchResults,setSearchResults]=useState([]);
   var [showSearch,setShowSearch]=useState(false);
   var [geoLoading,setGeoLoading]=useState(false);
+  var [useMph,setUseMph]=useState(true);
+  var [showInfo,setShowInfo]=useState(false);
+  var [infoHtml,setInfoHtml]=useState("");
+  var [weekAnim,setWeekAnim]=useState(false);
+
+  function toggleInfo() {
+    setShowInfo(!showInfo);
+  }
+
+  useEffect(function(){
+    fetch("https://api.github.com/repos/uotw/solarseeing/readme",{headers:{Accept:"application/vnd.github.html+json"}})
+    .then(function(r){return r.text();})
+    .then(function(html){setInfoHtml(html);})
+    .catch(function(){setInfoHtml("<p>Could not load README. Visit <a href='https://github.com/uotw/solarseeing' target='_blank'>github.com/uotw/solarseeing</a></p>");});
+  },[]);
+
+  function isUSCoords(la,lo) { return la>=24 && la<=50 && lo>=-125 && lo<=-66; }
 
   function doGeolocate() {
     if (!navigator.geolocation) return;
     setGeoLoading(true);
     navigator.geolocation.getCurrentPosition(function(pos) {
-      setLat(Math.round(pos.coords.latitude*100)/100);
-      setLon(Math.round(pos.coords.longitude*100)/100);
+      var la=Math.round(pos.coords.latitude*100)/100;
+      var lo=Math.round(pos.coords.longitude*100)/100;
+      setLat(la); setLon(lo);
       setLoc("My Location");
+      setUseMph(isUSCoords(la,lo));
       setGeoLoading(false);
       setSelectedDay(0);
     }, function() {
@@ -577,6 +600,7 @@ function App() {
     var name = result.name;
     if (result.admin1) name += ", " + result.admin1;
     setLoc(name);
+    setUseMph(result.country_code==="US" || result.country_code==="LR" || result.country_code==="MM");
     setSearchQuery("");
     setSearchResults([]);
     setShowSearch(false);
@@ -624,7 +648,7 @@ function App() {
           cloud:cloudTotal,cloudLow:cloudLow,cloudMid:cloudMid,cloudHigh:cloudHigh,effCloud:effCloud,
           cloudMult:cloudMult,score:finalScore,shearPenalty:shearPenalty(layers),sunriseHour:sunriseHour};
       });
-      setData(hrs); setLoading(false);
+      setData(hrs); setLoading(false); setWeekAnim(false); setTimeout(function(){setWeekAnim(true);},50);
     }).catch(function(e){setError(e.message);setLoading(false);});
   },[lat,lon]);
 
@@ -644,10 +668,61 @@ function App() {
   return (
     <div style={{minHeight:"100vh",background:"linear-gradient(180deg,#111 0%,#161616 50%,#111 100%)",color:"#e2e8f0",padding:"20px 12px"}}>
       <div style={{maxWidth:800,margin:"0 auto"}}>
-        <div style={{marginBottom:20,textAlign:"center"}}>
-          <div style={{fontSize:24,fontWeight:800,letterSpacing:"-0.5px",marginBottom:3}}><i className="fa-solid fa-sun" style={{color:"#fbbf24",marginRight:8}}></i>Solar Seeing Forecast</div>
-          <div style={{fontSize:11,color:"#64748b"}}>Multi-layer wind analysis for spectroheliograph imaging</div>
+        <div style={{marginBottom:20,textAlign:"center",position:"relative"}}>
+          <div style={{fontSize:24,fontWeight:800,letterSpacing:"-0.5px",marginBottom:3}}>
+            <i className="fa-solid fa-sun" style={{color:"#fbbf24",marginRight:8}}></i>Solar Seeing Forecast
+            <button onClick={toggleInfo} style={{background:"none",border:"none",cursor:"pointer",marginLeft:8,verticalAlign:"middle"}}>
+              <i className={showInfo?"fa-solid fa-circle-xmark":"fa-solid fa-circle-info"} style={{fontSize:16,color:"#475569"}}></i>
+            </button>
+          </div>
+          <div style={{fontSize:11,color:"#64748b"}}>Multi-layer wind analysis for solar imaging and viewing</div>
         </div>
+
+        {showInfo && (
+          <div onClick={function(e){if(e.target===e.currentTarget)setShowInfo(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.7)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+            <div style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.1)",borderRadius:14,padding:"20px 24px",maxWidth:700,width:"100%",maxHeight:"80vh",overflowY:"auto",fontSize:13,lineHeight:1.7,color:"#cbd5e1",position:"relative"}}>
+              <button onClick={function(){setShowInfo(false);}} style={{position:"sticky",top:0,float:"right",background:"rgba(255,255,255,0.06)",border:"none",borderRadius:20,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10}}>
+                <i className="fa-solid fa-xmark" style={{color:"#94a3b8",fontSize:14}}></i>
+              </button>
+              {infoHtml ? (
+                <div>
+                  <div style={{marginBottom:14,paddingBottom:12,borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+                    <a href="https://github.com/uotw/solarseeing" target="_blank" rel="noopener noreferrer" style={{color:"#fbbf24",textDecoration:"none",fontSize:12,fontWeight:600}}>
+                      <i className="fa-brands fa-github" style={{marginRight:6,fontSize:14}}></i>View on GitHub — contribute or suggest improvements
+                    </a>
+                  </div>
+                  <div dangerouslySetInnerHTML={{__html:infoHtml}} />
+                </div>
+              ) : (
+                <div style={{textAlign:"center",padding:20,color:"#64748b"}}><i className="fa-solid fa-spinner fa-spin" style={{marginRight:8}}></i>Loading...</div>
+              )}
+              <style dangerouslySetInnerHTML={{__html:
+                ".markdown-body,.markdown-body *{color:#cbd5e1!important;background:transparent!important}" +
+                ".markdown-body h1{font-size:20px;font-weight:800;margin:20px 0 10px;color:#f1f5f9!important;border-bottom:1px solid rgba(255,255,255,0.08);padding-bottom:8px}" +
+                ".markdown-body h2{font-size:16px;font-weight:700;margin:18px 0 8px;color:#e2e8f0!important;border-bottom:1px solid rgba(255,255,255,0.05);padding-bottom:6px}" +
+                ".markdown-body h3{font-size:14px;font-weight:600;margin:14px 0 6px;color:#e2e8f0!important}" +
+                ".markdown-body p{margin:8px 0}" +
+                ".markdown-body ul,.markdown-body ol{margin:8px 0;padding-left:20px}" +
+                ".markdown-body li{margin:4px 0}" +
+                ".markdown-body a{color:#fbbf24!important;text-decoration:none}" +
+                ".markdown-body a:hover{text-decoration:underline}" +
+                ".markdown-body code{background:rgba(255,255,255,0.06)!important;padding:2px 5px;border-radius:4px;font-size:12px;font-family:'JetBrains Mono',monospace}" +
+                ".markdown-body pre{background:rgba(255,255,255,0.04)!important;padding:12px;border-radius:8px;overflow-x:auto;margin:10px 0}" +
+                ".markdown-body pre code{background:transparent!important;padding:0}" +
+                ".markdown-body table{border-collapse:collapse;width:100%;margin:10px 0}" +
+                ".markdown-body th,.markdown-body td{border:1px solid rgba(255,255,255,0.08);padding:6px 10px;font-size:12px;text-align:left}" +
+                ".markdown-body th{background:rgba(255,255,255,0.04)!important;font-weight:600}" +
+                ".markdown-body img{max-width:100%;border-radius:8px;margin:10px 0}" +
+                ".markdown-body .anchor{display:none}" +
+                ".markdown-body .octicon{display:none}" +
+                ".markdown-body a>img[alt='Solar Seeing Forecast Screenshot']{display:none}" +
+                ".markdown-body a:has(>img[alt='Solar Seeing Forecast Screenshot']){display:none}" +
+                ".markdown-body strong{color:#f1f5f9!important}" +
+                ".markdown-body hr{border:none;border-top:1px solid rgba(255,255,255,0.06);margin:16px 0}"
+              }} />
+            </div>
+          </div>
+        )}
         <div style={{marginBottom:12}}>
           {/* Location display and controls */}
           <div style={{display:"flex",gap:6,justifyContent:"center",alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
@@ -743,15 +818,15 @@ function App() {
                         transition:"background 0.2s",
                       }}>
                         {/* Score */}
-                        <span style={{fontSize:16,fontWeight:800,color:"hsl("+hue+",75%,55%)",fontFamily:"'JetBrains Mono',monospace",marginBottom:2}}>{score}</span>
+                        <span style={{fontSize:16,fontWeight:800,color:"hsl("+hue+",75%,55%)",fontFamily:"'JetBrains Mono',monospace",marginBottom:2,opacity:weekAnim?1:0,transition:"opacity 0.4s ease "+(i*0.06)+"s"}}>{score}</span>
                         {/* Verdict */}
-                        <span style={{fontSize:8,fontWeight:600,color:"hsl("+hue+",60%,45%)",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>{scoreText(score)}</span>
+                        <span style={{fontSize:8,fontWeight:600,color:"hsl("+hue+",60%,45%)",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5,opacity:weekAnim?1:0,transition:"opacity 0.4s ease "+(i*0.06)+"s"}}>{scoreText(score)}</span>
                         {/* Bar */}
-                        <div style={{width:"100%",maxWidth:50,height:barH,borderRadius:5,background:"hsl("+hue+",65%,"+(isSel?"42%":"32%")+")",transition:"all 0.3s"}} />
+                        <div style={{width:"100%",maxWidth:50,height:weekAnim?barH:0,borderRadius:5,background:"hsl("+hue+",65%,"+(isSel?"42%":"32%")+")",transition:"height 0.6s cubic-bezier(0.34,1.56,0.64,1) "+(i*0.06)+"s, background 0.3s"}} />
                         {/* Best time */}
-                        <span style={{fontSize:9,color:"#64748b",marginTop:4,fontFamily:"'JetBrains Mono',monospace"}}>{d.bestTime}</span>
+                        <span style={{fontSize:9,color:"#64748b",marginTop:4,fontFamily:"'JetBrains Mono',monospace",opacity:weekAnim?1:0,transition:"opacity 0.3s ease "+(i*0.06+0.3)+"s"}}>{d.bestTime}</span>
                         {/* Day name */}
-                        <span style={{fontSize:10,fontWeight:isSel||d.isToday?700:500,color:isSel?"#efefef":d.isToday?"rgba(239,239,239,0.7)":"#94a3b8",marginTop:2}}>{dayName}</span>
+                        <span style={{fontSize:10,fontWeight:isSel||d.isToday?700:500,color:isSel?"#efefef":d.isToday?"rgba(239,239,239,0.7)":"#94a3b8",marginTop:2,opacity:weekAnim?1:0,transition:"opacity 0.3s ease "+(i*0.06+0.3)+"s"}}>{dayName}</span>
                       </div>
                     );
                   })}
@@ -759,14 +834,14 @@ function App() {
               </div>
               {/* Single selected day card */}
               {entries[selectedDay] && (
-                <DayCard key={entries[selectedDay][0]} date={entries[selectedDay][0]} hours={entries[selectedDay][1]} isToday={entries[selectedDay][0]===todayStr}/>
+                <DayCard key={entries[selectedDay][0]} date={entries[selectedDay][0]} hours={entries[selectedDay][1]} isToday={entries[selectedDay][0]===todayStr} useMph={useMph}/>
               )}
             </div>
           );
         })()}
 
         <div style={{textAlign:"center",marginTop:28,padding:14,fontSize:9,color:"#334155",borderTop:"1px solid rgba(255,255,255,0.04)"}}>
-          Data: NOAA GFS via Open-Meteo &middot; Tuned for SHG solar imaging &middot; Image before 9 AM on 65+ days
+          Data: NOAA GFS via Open-Meteo &middot; Tuned for solar imaging &middot; Image before 9 AM on 65+ days
           <div style={{marginTop:8,fontSize:10,color:"#475569"}}>Built by Ben C. Smith, MD</div>
         </div>
       </div>
