@@ -8,7 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -669,13 +669,14 @@ function App() {
     <div style={{minHeight:"100vh",background:"linear-gradient(180deg,#111 0%,#161616 50%,#111 100%)",color:"#e2e8f0",padding:"20px 12px"}}>
       <div style={{maxWidth:800,margin:"0 auto"}}>
         <div style={{marginBottom:20,textAlign:"center",position:"relative"}}>
-          <div style={{fontSize:24,fontWeight:800,letterSpacing:"-0.5px",marginBottom:3}}>
-            <i className="fa-solid fa-sun" style={{color:"#fbbf24",marginRight:8}}></i>Solar Seeing Forecast
-            <button onClick={toggleInfo} style={{background:"none",border:"none",cursor:"pointer",marginLeft:8,verticalAlign:"middle"}}>
-              <i className={showInfo?"fa-solid fa-circle-xmark":"fa-solid fa-circle-info"} style={{fontSize:16,color:"#475569"}}></i>
+          <div style={{fontFamily:"'Outfit',sans-serif",fontSize:32,textTransform:"uppercase",letterSpacing:6,color:"#e2e8f0",marginBottom:2}}>
+            <span style={{fontWeight:200}}>Solar</span> <span style={{fontWeight:700}}>Seeing</span>
+            <button onClick={toggleInfo} style={{background:"none",border:"none",cursor:"pointer",marginLeft:6,verticalAlign:"middle"}}>
+              <i className={showInfo?"fa-solid fa-circle-xmark":"fa-solid fa-circle-info"} style={{fontSize:13,color:"#475569"}}></i>
             </button>
           </div>
-          <div style={{fontSize:11,color:"#64748b"}}>Multi-layer wind analysis for solar imaging and viewing</div>
+          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,letterSpacing:5,textTransform:"uppercase",color:"#475569",marginTop:2}}>Forecast</div>
+          <div style={{fontSize:11,color:"#64748b",marginTop:6}}>Multi-layer wind analysis for solar imaging and viewing</div>
         </div>
 
         {showInfo && (
