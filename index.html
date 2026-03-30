@@ -37,6 +37,8 @@
   body { background: #111111; font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; }
   @keyframes shimmer { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
   .skel { background: rgba(255,255,255,0.06); border-radius: 4px; animation: shimmer 1.5s ease-in-out infinite; }
+  @keyframes taper-grow { 0% { transform: scaleX(0); opacity: 0; } 60% { opacity: 1; } 100% { transform: scaleX(1); opacity: 1; } }
+  .taper-line { transform-origin: center; animation: taper-grow 0.8s cubic-bezier(0.16,1,0.3,1) 0.2s both; }
 </style>
 </head>
 <body>
@@ -703,14 +705,27 @@ function App() {
     <div style={{minHeight:"100vh",background:"linear-gradient(180deg,#111 0%,#161616 50%,#111 100%)",color:"#e2e8f0",padding:"20px 12px"}}>
       <div style={{maxWidth:800,margin:"0 auto"}}>
         <div style={{marginBottom:20,textAlign:"center",position:"relative"}}>
-          <div style={{fontFamily:"'Outfit',sans-serif",fontSize:32,textTransform:"uppercase",letterSpacing:6,color:"#e2e8f0",marginBottom:2}}>
+          <div style={{fontFamily:"'Outfit',sans-serif",fontSize:32,textTransform:"uppercase",letterSpacing:6,color:"#e2e8f0",marginBottom:6}}>
             <span style={{fontWeight:100}}>Solar</span> <span style={{fontWeight:600}}>Seeing</span>
             <button onClick={toggleInfo} style={{background:"none",border:"none",cursor:"pointer",marginLeft:6,verticalAlign:"middle"}}>
               <i className={showInfo?"fa-solid fa-circle-xmark":"fa-solid fa-circle-info"} style={{fontSize:13,color:"#475569"}}></i>
             </button>
           </div>
-          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,letterSpacing:5,textTransform:"uppercase",color:"#475569",marginTop:2}}>Forecast</div>
-          <div style={{fontSize:11,color:"#64748b",marginTop:6}}>Multi-layer wind analysis for solar imaging and viewing</div>
+          <svg className="taper-line" width="320" height="6" viewBox="0 0 320 6" style={{display:"block",margin:"0 auto 4px"}}>
+            <defs>
+              <linearGradient id="taper-alpha" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="#e2e8f0" stopOpacity="0"/>
+                <stop offset="15%" stopColor="#e2e8f0" stopOpacity="0.4"/>
+                <stop offset="40%" stopColor="#e2e8f0" stopOpacity="1"/>
+                <stop offset="50%" stopColor="#e2e8f0" stopOpacity="1"/>
+                <stop offset="60%" stopColor="#e2e8f0" stopOpacity="1"/>
+                <stop offset="85%" stopColor="#e2e8f0" stopOpacity="0.4"/>
+                <stop offset="100%" stopColor="#e2e8f0" stopOpacity="0"/>
+              </linearGradient>
+            </defs>
+            <ellipse cx="160" cy="3" rx="160" ry="1.8" fill="url(#taper-alpha)"/>
+          </svg>
+          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,letterSpacing:5,textTransform:"uppercase",color:"#475569"}}>Forecast</div>
         </div>
 
         {showInfo && (
@@ -816,9 +831,6 @@ function App() {
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:12,flexWrap:"wrap",fontSize:10,color:"#64748b"}}>
           <span style={{color:"#22c55e"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>80+ Excellent</span><span style={{color:"#eab308"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>65-79 Good</span><span style={{color:"#f97316"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>45-64 Decent</span><span style={{color:"#ef4444"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>25-44 Poor</span><span style={{color:"#991b1b"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>&lt;25 Bad</span>
-        </div>
-        <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",borderRadius:8,padding:10,marginBottom:20,fontSize:10,color:"#475569",lineHeight:1.5,textAlign:"center"}}>
-          Weighted: 850hPa 40% &middot; 700hPa 25% &middot; 500hPa 15% &middot; 250hPa 20% &middot; Shear penalty &middot; Cloud cover multiplier &middot; Tap bar for details
         </div>
 
         {loading && (
