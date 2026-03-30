@@ -705,13 +705,13 @@ function App() {
     <div style={{minHeight:"100vh",background:"linear-gradient(180deg,#111 0%,#161616 50%,#111 100%)",color:"#e2e8f0",padding:"20px 12px"}}>
       <div style={{maxWidth:800,margin:"0 auto"}}>
         <div style={{marginBottom:20,textAlign:"center",position:"relative"}}>
-          <div style={{fontFamily:"'Outfit',sans-serif",fontSize:32,textTransform:"uppercase",letterSpacing:6,color:"#e2e8f0",marginBottom:6}}>
+          <div style={{fontFamily:"'Outfit',sans-serif",fontSize:32,textTransform:"uppercase",letterSpacing:6,color:"#e2e8f0",marginBottom:0}}>
             <span style={{fontWeight:100}}>Solar</span> <span style={{fontWeight:600}}>Seeing</span>
             <button onClick={toggleInfo} style={{background:"none",border:"none",cursor:"pointer",marginLeft:6,verticalAlign:"middle"}}>
               <i className={showInfo?"fa-solid fa-circle-xmark":"fa-solid fa-circle-info"} style={{fontSize:13,color:"#475569"}}></i>
             </button>
           </div>
-          <svg className="taper-line" width="320" height="6" viewBox="0 0 320 6" style={{display:"block",margin:"0 auto 4px"}}>
+          <svg className="taper-line" width="320" height="4" viewBox="0 0 320 4" style={{display:"block",margin:"2px auto 5px"}}>
             <defs>
               <linearGradient id="taper-alpha" x1="0" y1="0" x2="1" y2="0">
                 <stop offset="0%" stopColor="#e2e8f0" stopOpacity="0"/>
@@ -723,7 +723,7 @@ function App() {
                 <stop offset="100%" stopColor="#e2e8f0" stopOpacity="0"/>
               </linearGradient>
             </defs>
-            <ellipse cx="160" cy="3" rx="160" ry="1.8" fill="url(#taper-alpha)"/>
+            <ellipse cx="160" cy="2" rx="160" ry="1" fill="url(#taper-alpha)"/>
           </svg>
           <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,letterSpacing:5,textTransform:"uppercase",color:"#475569"}}>Forecast</div>
         </div>
