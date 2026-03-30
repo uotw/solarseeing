@@ -464,7 +464,17 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect, useMph }) {
           </div>
         </div>
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-          {hour.shearPenalty>0 && <span style={{ fontSize:10, color:"#f59e0b", fontFamily:"'JetBrains Mono',monospace", background:"rgba(245,158,11,0.1)", padding:"3px 7px", borderRadius:5 }}>Shear -{hour.shearPenalty}</span>}
+          {(function(){
+            var totalShear=0;
+            for(var si=0;si<hour.layers.length-1;si++){
+              var l1=hour.layers[si],l2=hour.layers[si+1];
+              var r1=l1.direction*Math.PI/180,r2=l2.direction*Math.PI/180;
+              var du=l2.speed*Math.sin(r2)-l1.speed*Math.sin(r1);
+              var dv=l2.speed*Math.cos(r2)-l1.speed*Math.cos(r1);
+              totalShear+=Math.sqrt(du*du+dv*dv);
+            }
+            return <span style={{ fontSize:10, color:"#f59e0b", fontFamily:"'JetBrains Mono',monospace", background:"rgba(245,158,11,0.1)", padding:"3px 7px", borderRadius:5 }}>Shear {fmtWind(totalShear/3,useMph)} {windUnit(useMph)}</span>;
+          })()}
         </div>
       </div>
 
