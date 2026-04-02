@@ -2,13 +2,13 @@
 
 **[solarseeing.com](https://solarseeing.com)**
 
-A free, open-source solar seeing forecast tool for spectroheliograph and solar telescope imaging. Analyzes multi-layer atmospheric wind data to predict seeing conditions up to 7 days out.
+A free, open-source solar seeing forecast tool for spectroheliograph and solar telescope imaging. Analyzes multi-layer atmospheric wind and boundary layer thermal data to predict seeing conditions up to 7 days out.
 
 ## Why This Exists
 
 Standard astronomical seeing forecasts (Clear Sky Chart, Astrospheric, Meteoblue) are designed for nighttime observing and don't reliably predict daytime seeing conditions. Daytime solar seeing is dominated by ground-layer convection — not the upper-atmosphere turbulence that nighttime tools model.
 
-This tool analyzes wind speed and direction at four atmospheric pressure levels, applies literature-calibrated scoring weights, and produces an hourly seeing quality forecast tuned specifically for solar imaging.
+This tool analyzes wind speed and direction at four atmospheric pressure levels, adds a boundary layer thermal component derived from sensible heat flux and planetary boundary layer height, and produces an hourly seeing quality forecast tuned specifically for solar imaging.
 
 ## How It Works
 
@@ -22,6 +22,36 @@ The tool pulls GFS forecast data from the [Open-Meteo API](https://open-meteo.co
 | 700 hPa | ~9k ft | 25% | Summit-adjacent — strong predictor per Mauna Kea Weather Center ML models |
 | 500 hPa | ~17k ft | 15% | Mid-troposphere — weaker individual predictor, falls in turbulence "gap" |
 | 250 hPa | ~32k ft | 20% | Jet stream — Vernin (1986) 20 m/s threshold for sub-arcsecond seeing |
+
+### Boundary Layer Thermal Penalty
+
+In addition to wind, the tool applies a thermal penalty derived from two surface variables that directly drive daytime optical turbulence in the boundary layer:
+
+**Sensible heat flux (SHF)** is the primary thermal driver. Via Monin-Obukhov similarity theory, Cn² scales with H^(2/3), where H is the surface sensible heat flux. High SHF means the ground is actively pumping heat into the boundary layer, generating convective turbulence. In correlation analysis against a full year of Solar Scintillation Monitor (SSM) data at St Véran Observatory (n=292 morning hours), SHF achieved r=+0.667 vs measured seeing — stronger than any individual wind layer.
+
+**Planetary boundary layer height (PBL)** is the secondary thermal driver. A deeper convective column means more integrated Cn² overhead. PBL height under 500m (typical at dawn) contributes no penalty; a fully developed summer convective boundary layer exceeding 3.5 km contributes up to 28 points of penalty.
+
+Latent heat flux was evaluated but excluded — empirical correlation analysis showed it dilutes the combined SHF+PBL signal (r drops from 0.686 to 0.636 when added).
+
+The thermal penalty is subtracted from the wind score before the cloud multiplier is applied, with a maximum cap of 50 points:
+
+| SHF (W/m²) | Penalty | Typical Timing |
+|------------|---------|----------------|
+| ≤ 0 | 0 pts | Night / stable |
+| < 50 | 3 pts | Early morning |
+| < 150 | 12 pts | Mid-morning |
+| < 300 | 22 pts | Late morning |
+| < 500 | 32 pts | Midday summer |
+| 500+ | 40 pts | Peak convection |
+
+| PBL Height | Penalty |
+|------------|---------|
+| < 500 m | 0 pts |
+| < 1000 m | 3 pts |
+| < 1500 m | 8 pts |
+| < 2500 m | 15 pts |
+| < 3500 m | 22 pts |
+| 3500 m+ | 28 pts |
 
 ### Scoring Model
 
@@ -51,6 +81,7 @@ This tool forecasts free-atmosphere and boundary layer wind conditions using GFS
 - **7-day forecast** with best score per day at a glance
 - **Hourly bar chart** for each day — tap any bar for details
 - **Multi-layer wind speed chart** — see all four layers plotted across the day with shear overlay
+- **Thermal panel** — sensible heat flux (W/m²), PBL height (m), and thermal penalty breakdown
 - **Cloud cover integration** — cloud icons on bars, detailed breakdown in panel
 - **Wind shear visualization** — dashed red line showing total vector shear
 - **Time filters** — All Hours / Daylight / Morning (sunrise-based)
@@ -65,11 +96,28 @@ The scoring model draws from:
 - **Vernin (1986)** — foundational 20 m/s jet stream threshold
 - **Sarazin & Tokovinin (2002)** — V₀ = max(V_ground, 0.4 × V₂₀₀) empirical formula used at ESO Paranal
 - **Cherubini et al. (2022)** — Mauna Kea Weather Center ML seeing forecast, GFS at 650-200 mb
+- **Andreas, E. L. (1988)** — "Estimating Cn² over snow and sea ice from meteorological data," JOSA-A 5(4). Establishes Cn² ∝ H^(2/3) via Monin-Obukhov similarity theory; foundational basis for the SHF penalty term
+- **Quatresooz, F., Vanhoenacker-Janvier, D., & Oestges, C. (2023)** — "Daytime forecast of optical turbulence for optical communications," COAT2023. Hybrid Cn² profile model separating boundary layer (SHF + PBL height via Monin-Obukhov) from free atmosphere (Tatarskii + HMNSP99 outer scale); directly informs the thermal penalty structure
+- **Montoya, L. et al. (2017)** — "Modeling day time turbulence profiles: application to Teide Observatory," AO4ELT5. SCIDAR-validated comparison of Coulman, Dewan, Masciadri, Thorpe, and Trinquet Cn² models at Tenerife; confirms free atmosphere is stationary between day and night, supports hybrid boundary layer approach
+- **Shikhovtsev, A. Y. et al. (2023)** — "Simulating atmospheric characteristics and daytime astronomical seeing using Weather Research and Forecasting Model," *Applied Sciences* 13(10), 6354. WRF-based daytime seeing at Baikal Astrophysical Observatory; validates Dewan outer-scale model and demonstrates site-specific calibration requirement; WRF-modeled seeing vs Shack-Hartmann measurements
 - **Big Bear Solar Observatory** — daytime Cn² profiles showing 55-65% of turbulence below 500m
 - **Swedish Solar Telescope, La Palma** — 67% of daytime turbulence in 0-500m layer
-- **Baikal Astrophysical Observatory** — daytime optical turbulence and wind speed distributions
 - **Cloudy Nights / SolarChat forums** — community experience with jet stream thresholds, site selection, and daytime seeing patterns
 
+## Validation
+
+The scoring model has been tested against one year of Solar Scintillation Monitor (SSM) data from St Véran Observatory, France (2930m altitude, Mar 2025–Mar 2026, n=1826 daytime hours). Key findings from morning hours (06-09 UTC, n=292):
+
+| Variable | r vs seeing arcseconds |
+|----------|----------------------|
+| Sensible heat flux | +0.667 |
+| Thermal penalty (combined) | +0.639 |
+| PBL height | +0.604 |
+| 850 hPa wind speed | +0.412 |
+| Combined SHF+PBL (normalized) | +0.695 |
+| Full score (wind + thermals) | −0.185 |
+
+Positive r values indicate the variable correctly predicts worse seeing (higher arcseconds). The composite score's negative r confirms higher scores predict better seeing. Correlation is moderate — consistent with published WRF-based Cn² forecast results (Quatresooz et al. achieved r≈0.53–0.56 at Tenerife using a full mesoscale model). St Véran at 2930m is not representative of typical backyard observer sites; low-altitude validation data would be very welcome.
 
 ## Tech Stack
 
@@ -107,9 +155,9 @@ This is a first-version scoring model that needs real-world validation. Contribu
 - **Imaging session reports** — compare the forecast score to your actual seeing conditions
 - **SSM data correlation** — if you have a Solar Scintillation Monitor, comparing readings to predictions would be invaluable
 - **Scoring threshold refinements** — adjust the wind speed breakpoints based on empirical data
-- **Additional data sources** — temperature gradients, boundary layer height, humidity
+- **Low-altitude validation** — the current SSM dataset is from a 2930m mountain site; backyard-level data (200-500m) would be far more representative for most users
 - **UI improvements** — mobile optimization, accessibility, additional visualizations
-  
+
 ![Solar Seeing Forecast Screenshot](screenshot.jpg)
 
 ## License
@@ -119,3 +167,5 @@ MIT
 ## Acknowledgments
 
 Built with data from [Open-Meteo](https://open-meteo.com/) and informed by decades of community knowledge from [Cloudy Nights](https://www.cloudynights.com/), [SolarChat](https://solarchatforum.com/), and the professional observatory seeing research community.
+
+Scoring model research, correlation analysis, and code were developed with the assistance of [Claude](https://claude.ai) (Anthropic).

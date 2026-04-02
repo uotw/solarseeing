@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Solar Seeing Forecast — 7-Day Seeing Prediction for Solar Imaging</title>
 <meta name="description" content="Free multi-layer wind analysis tool for solar imaging and viewing. Scores seeing conditions hourly using GFS data at four atmospheric pressure levels with cloud cover and wind shear analysis.">
-
-<!-- Open Graph / Facebook -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://solarseeing.com/">
 <meta property="og:title" content="Solar Seeing Forecast">
@@ -14,15 +12,11 @@
 <meta property="og:image" content="https://solarseeing.com/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-
-<!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:url" content="https://solarseeing.com/">
 <meta name="twitter:title" content="Solar Seeing Forecast">
 <meta name="twitter:description" content="Free 7-day seeing forecast for solar imaging. Multi-layer wind analysis with cloud cover and wind shear scoring.">
 <meta name="twitter:image" content="https://solarseeing.com/og-image.png">
-
-<!-- Additional -->
 <meta name="author" content="Ben C. Smith, MD">
 <meta name="theme-color" content="#111111">
 <link rel="canonical" href="https://solarseeing.com/">
@@ -54,16 +48,14 @@ const PRESSURE_LEVELS = [
 ];
 
 function windSpeedScore(speed_ms, hpa) {
-  /* 850 hPa: U-shaped — stagnant air bad (thermal plumes), moderate best, strong bad */
   if (hpa === 850) {
-    if (speed_ms < 2) return 70;      /* too calm, thermals build */
-    if (speed_ms < 5) return 100;     /* optimal: gentle mixing */
+    if (speed_ms < 2) return 70;
+    if (speed_ms < 5) return 100;
     if (speed_ms < 8) return 75;
     if (speed_ms < 10) return 55;
     if (speed_ms < 15) return 25;
     return 5;
   }
-  /* 700 hPa: summit-adjacent, strong predictor per Maidanak/MKWC */
   if (hpa === 700) {
     if (speed_ms < 5) return 100;
     if (speed_ms < 8) return 85;
@@ -71,7 +63,6 @@ function windSpeedScore(speed_ms, hpa) {
     if (speed_ms < 15) return 35;
     return 10;
   }
-  /* 500 hPa: mid-tropo gap, weaker predictor */
   if (hpa === 500) {
     if (speed_ms < 8) return 100;
     if (speed_ms < 15) return 70;
@@ -79,42 +70,61 @@ function windSpeedScore(speed_ms, hpa) {
     if (speed_ms < 30) return 20;
     return 5;
   }
-  /* 250 hPa: jet stream — Vernin 20 m/s threshold */
   if (speed_ms < 10) return 100;
-  if (speed_ms < 20) return 75;       /* Vernin: <20 needed for sub-arcsec */
+  if (speed_ms < 20) return 75;
   if (speed_ms < 30) return 45;
   if (speed_ms < 40) return 20;
   return 5;
 }
 
 function shearPenalty(layers) {
-  /* Penalize adjacent-layer wind shear: both speed difference and directional divergence.
-     Cn² ∝ S² (shear squared). Ri < 0.25 triggers Kelvin-Helmholtz instability.
-     Heuristic: penalize vector wind difference >15 m/s or direction change >90° between adjacent layers. */
   var penalty = 0;
   for (var i = 0; i < layers.length - 1; i++) {
     var l1 = layers[i], l2 = layers[i + 1];
-    /* speed difference */
-    var dSpeed = Math.abs(l1.speed - l2.speed);
-    /* directional difference */
     var dDir = Math.abs(l1.direction - l2.direction);
     if (dDir > 180) dDir = 360 - dDir;
-    /* vector wind difference (approximate) */
     var r1 = l1.direction * Math.PI / 180, r2 = l2.direction * Math.PI / 180;
     var u1 = l1.speed * Math.sin(r1), v1 = l1.speed * Math.cos(r1);
     var u2 = l2.speed * Math.sin(r2), v2 = l2.speed * Math.cos(r2);
     var vectorDiff = Math.sqrt((u2 - u1) * (u2 - u1) + (v2 - v1) * (v2 - v1));
-
-    /* Penalties scale with shear magnitude */
     if (vectorDiff > 30) penalty += 10;
     else if (vectorDiff > 20) penalty += 6;
     else if (vectorDiff > 15) penalty += 3;
-
     if (dDir > 120) penalty += 6;
     else if (dDir > 90) penalty += 3;
     else if (dDir > 60) penalty += 1;
   }
-  return Math.min(penalty, 35);  /* cap total penalty */
+  return Math.min(penalty, 35);
+}
+
+/* Boundary layer thermal penalty.
+   Sources: Andreas (1988) JOSA-A — Cn² ∝ H^(2/3) via Monin-Obukhov similarity theory.
+   Quatresooz et al. (COAT2023) — hybrid Cn² model using SHF and PBL height hBL.
+   Correlation analysis (St Véran SSM, n=292 morning hours): SHF r=+0.667, PBL r=+0.604.
+   LHF excluded — empirically dilutes combined SHF+PBL signal (r drops 0.686→0.636). */
+function thermalPenalty(shf, pblHeight) {
+  /* 1. Sensible heat flux — primary surface-layer Cn² driver (0-40 pts).
+        Cn² ∝ H^(2/3); negative SHF = stable/night = no penalty. */
+  var shfPen = 0;
+  if (shf <= 0)        shfPen = 0;
+  else if (shf < 50)   shfPen = 3;
+  else if (shf < 150)  shfPen = 12;
+  else if (shf < 300)  shfPen = 22;
+  else if (shf < 500)  shfPen = 32;
+  else                 shfPen = 40;
+
+  /* 2. PBL height — deeper convective column = more integrated Cn² (0-28 pts).
+        Quatresooz uses z^(-4/3) decay within PBL; deeper hBL = larger integrated turbulence.
+        Big Bear Solar Observatory data: ground layer (<500m) holds 55-65% of turbulence. */
+  var pblPen = 0;
+  if (pblHeight < 500)       pblPen = 0;
+  else if (pblHeight < 1000) pblPen = 3;
+  else if (pblHeight < 1500) pblPen = 8;
+  else if (pblHeight < 2500) pblPen = 15;
+  else if (pblHeight < 3500) pblPen = 22;
+  else                       pblPen = 28;
+
+  return Math.min(shfPen + pblPen, 50);
 }
 
 function computeSeeingScore(layers) {
@@ -131,6 +141,25 @@ function fmtH(t) { var h=new Date(t).getHours(); return (h%12||12)+(h>=12?"p":"a
 function fmtDate(t) { return new Date(t).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); }
 function fmtWind(ms, mph) { return mph ? Math.round(ms*2.237) : ms.toFixed(1); }
 function windUnit(mph) { return mph ? "mph" : "m/s"; }
+
+function thermalColor(pen) {
+  if (pen < 5)  return "#22c55e";
+  if (pen < 15) return "#eab308";
+  if (pen < 30) return "#f97316";
+  return "#ef4444";
+}
+function thermalBorder(pen) {
+  if (pen < 5)  return "3px solid #22c55e";
+  if (pen < 15) return "3px solid #eab308";
+  if (pen < 30) return "3px solid #f97316";
+  return "3px solid #ef4444";
+}
+function thermalLabel(pen) {
+  if (pen < 5)  return "Stable";
+  if (pen < 15) return "Moderate";
+  if (pen < 30) return "Active";
+  return "Severe";
+}
 
 function SeeingChart({ hours, selectedIdx, onSelect, currentIdx }) {
   var cH = 140;
@@ -173,14 +202,13 @@ function SeeingChart({ hours, selectedIdx, onSelect, currentIdx }) {
 
 function WindLayerChart({ allHours, selectedIdx, onSelect, useMph }) {
   if (!allHours || allHours.length === 0) return null;
-  var padL = 35; /* left padding for y-axis labels */
+  var padL = 35;
   var padR = 10;
   var padT = 8;
-  var padB = 18; /* bottom for x-axis labels */
+  var padB = 18;
   var cH = 100;
-  var totalW = 600; /* fixed internal SVG width */
+  var totalW = 600;
   var plotW = totalW - padL - padR;
-  /* find max wind speed across all layers and hours for scaling */
   var maxWind = 0;
   allHours.forEach(function(h) { h.layers.forEach(function(l) { if (l.speed > maxWind) maxWind = l.speed; }); });
   maxWind = Math.max(maxWind, 10);
@@ -202,17 +230,14 @@ function WindLayerChart({ allHours, selectedIdx, onSelect, useMph }) {
     if (!onSelect) return;
     var svg = evt.currentTarget;
     var rect = svg.getBoundingClientRect();
-    /* Map pixel click to SVG x coordinate */
     var svgX = (evt.clientX - rect.left) / rect.width * totalW;
-    /* Convert to hour index */
     var plotX = svgX - padL;
     var idx = Math.round(plotX / stepX);
     idx = Math.max(0, Math.min(allHours.length - 1, idx));
     onSelect(idx);
   }
 
-  /* compute total vector shear per hour (sum of adjacent-layer shear) */
-  var shearPairs = [[0,1],[1,2],[2,3]]; /* 850-700, 700-500, 500-250 */
+  var shearPairs = [[0,1],[1,2],[2,3]];
   var shearPerHour = allHours.map(function(h) {
     var total = 0;
     shearPairs.forEach(function(p) {
@@ -226,13 +251,11 @@ function WindLayerChart({ allHours, selectedIdx, onSelect, useMph }) {
   });
   var maxShear = Math.max.apply(null, shearPerHour);
   maxShear = Math.max(maxShear, 10);
-  /* scale shear to same Y axis as wind speed (map maxShear to maxWind) */
   function shearY(s) { return padT + cH - (s / maxShear) * cH; }
   var shearPath = shearPerHour.map(function(s, i) {
     return (i === 0 ? "M" : "L") + hourX(i).toFixed(1) + "," + shearY(s).toFixed(1);
   }).join(" ");
 
-  /* Y-axis labels */
   var yTicks = [0, Math.round(maxWind * 0.5), Math.round(maxWind)];
   var yTickLabels = yTicks.map(function(v) { return useMph ? Math.round(v * 2.237) : v.toFixed(0); });
 
@@ -255,7 +278,6 @@ function WindLayerChart({ allHours, selectedIdx, onSelect, useMph }) {
       </div>
       <div style={{ width: "100%" }}>
         <svg viewBox={"0 0 " + totalW + " " + (cH + padT + padB)} preserveAspectRatio="none" style={{ width: "100%", height: cH + padT + padB + 10, display: "block", cursor: "pointer" }} onClick={handleClick}>
-          {/* Y-axis grid lines and labels */}
           {yTicks.map(function(v, i) {
             var y = speedY(v);
             return <g key={i}>
@@ -263,38 +285,23 @@ function WindLayerChart({ allHours, selectedIdx, onSelect, useMph }) {
               <text x={padL - 4} y={y + 3} textAnchor="end" fill="#475569" fontSize="8" fontFamily="'JetBrains Mono',monospace">{yTickLabels[i]}</text>
             </g>;
           })}
-          {/* mph label */}
           <text x="6" y={padT + cH / 2} textAnchor="middle" fill="#334155" fontSize="7" fontFamily="'JetBrains Mono',monospace" transform={"rotate(-90,6," + (padT + cH / 2) + ")"}>{useMph?"mph":"m/s"}</text>
-
-          {/* Shear filled area (subtle) */}
           <path d={shearPath + " L" + hourX(allHours.length - 1).toFixed(1) + "," + (padT + cH) + " L" + hourX(0).toFixed(1) + "," + (padT + cH) + " Z"} fill="rgba(239,68,68,0.06)" />
-
-          {/* Layer lines */}
           {PRESSURE_LEVELS.map(function(pl, li) {
             return <path key={pl.hpa} d={makePath(li)} fill="none" stroke={pl.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.8" vectorEffect="non-scaling-stroke" />;
           })}
-
-          {/* Shear line (dashed) */}
           <path d={shearPath} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="4,3" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" vectorEffect="non-scaling-stroke" />
-
-          {/* Selected hour vertical line */}
           {selectedIdx >= 0 && selectedIdx < allHours.length && (
             <line x1={hourX(selectedIdx)} y1={padT} x2={hourX(selectedIdx)} y2={padT + cH} stroke="rgba(239,239,239,0.5)" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" vectorEffect="non-scaling-stroke" />
           )}
-
-          {/* Selected hour dots */}
           {selectedIdx >= 0 && selectedIdx < allHours.length && PRESSURE_LEVELS.map(function(pl, li) {
             var x = hourX(selectedIdx);
             var y = speedY(allHours[selectedIdx].layers[li].speed);
             return <circle key={pl.hpa} cx={x} cy={y} r="4" fill={pl.color} stroke="#0f172a" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />;
           })}
-
-          {/* Selected hour shear dot */}
           {selectedIdx >= 0 && selectedIdx < allHours.length && (
             <circle cx={hourX(selectedIdx)} cy={shearY(shearPerHour[selectedIdx])} r="3" fill="#ef4444" stroke="#0f172a" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.7" />
           )}
-
-          {/* X-axis hour labels */}
           {allHours.map(function(h, i) {
             if (i % 2 !== 0 && allHours.length > 8) return null;
             var x = hourX(i);
@@ -310,9 +317,7 @@ function WindHeatMap({ allHours, selectedIdx, onSelect }) {
   if (!allHours || allHours.length === 0) return null;
   var rowH = 18;
   var shearH = 6;
-  /* layers displayed bottom-to-top (850 at bottom = closest to ground, 250 at top = jet stream) */
-  var layerOrder = [3, 2, 1, 0]; /* 250, 500, 700, 850 from top to bottom */
-  /* adjacent pairs for shear bars (top-to-bottom): 250-500, 500-700, 700-850 */
+  var layerOrder = [3, 2, 1, 0];
   var shearPairs = [[3, 2], [2, 1], [1, 0]];
 
   function speedToColor(speed_ms, hpa) {
@@ -325,31 +330,19 @@ function WindHeatMap({ allHours, selectedIdx, onSelect }) {
 
   function layerShear(h, upperIdx, lowerIdx) {
     var u = h.layers[upperIdx], lo = h.layers[lowerIdx];
-    /* vector wind difference */
     var r1 = u.direction * Math.PI / 180, r2 = lo.direction * Math.PI / 180;
     var du = u.speed * Math.sin(r1) - lo.speed * Math.sin(r2);
     var dv = u.speed * Math.cos(r1) - lo.speed * Math.cos(r2);
     return Math.sqrt(du * du + dv * dv);
   }
 
-  /* find max shear for color scaling */
-  var maxShear = 0;
-  allHours.forEach(function(h) {
-    shearPairs.forEach(function(p) {
-      var s = layerShear(h, p[0], p[1]);
-      if (s > maxShear) maxShear = s;
-    });
-  });
-  maxShear = Math.max(maxShear, 10);
-
   function shearToColor(shearVal) {
-    /* low shear = dim/transparent, high shear = bright warning */
-    var intensity = Math.min(1, shearVal / 30); /* normalize to ~30 m/s as "extreme" */
-    if (intensity < 0.2) return "rgba(34,197,94,0.15)";   /* green, very faint */
-    if (intensity < 0.4) return "rgba(234,179,8,0.3)";    /* yellow */
-    if (intensity < 0.6) return "rgba(249,115,22,0.5)";   /* orange */
-    if (intensity < 0.8) return "rgba(239,68,68,0.6)";    /* red */
-    return "rgba(239,68,68,0.85)";                         /* bright red */
+    var intensity = Math.min(1, shearVal / 30);
+    if (intensity < 0.2) return "rgba(34,197,94,0.15)";
+    if (intensity < 0.4) return "rgba(234,179,8,0.3)";
+    if (intensity < 0.6) return "rgba(249,115,22,0.5)";
+    if (intensity < 0.8) return "rgba(239,68,68,0.6)";
+    return "rgba(239,68,68,0.85)";
   }
 
   return (
@@ -359,7 +352,6 @@ function WindHeatMap({ allHours, selectedIdx, onSelect }) {
         <span style={{ fontSize: 7, color: "#475569" }}>bars = wind shear between layers</span>
       </div>
       <div style={{ display: "flex", width: "100%" }}>
-        {/* Y-axis labels */}
         <div style={{ display: "flex", flexDirection: "column", marginRight: 4 }}>
           {layerOrder.map(function(li, rowIdx) {
             var pl = PRESSURE_LEVELS[li];
@@ -369,20 +361,15 @@ function WindHeatMap({ allHours, selectedIdx, onSelect }) {
                 <span style={{ fontSize: 7, color: "#64748b", fontFamily: "'JetBrains Mono',monospace", whiteSpace: "nowrap" }}>{pl.alt}</span>
               </div>
             );
-            /* add shear label spacer between layers (except after last) */
             if (rowIdx < layerOrder.length - 1) {
-              items.push(
-                <div key={"shear-"+li} style={{ height: shearH }}></div>
-              );
+              items.push(<div key={"shear-"+li} style={{ height: shearH }}></div>);
             }
             return items;
           })}
         </div>
-        {/* Heat map grid */}
         <div style={{ flex: 1 }}>
           {layerOrder.map(function(li, rowIdx) {
             var items = [];
-            /* wind speed row */
             items.push(
               <div key={"row-"+li} style={{ display: "flex", height: rowH, gap: 1 }}>
                 {allHours.map(function(h, hi) {
@@ -402,7 +389,6 @@ function WindHeatMap({ allHours, selectedIdx, onSelect }) {
                 })}
               </div>
             );
-            /* shear bar between this layer and the next (except after last) */
             if (rowIdx < layerOrder.length - 1) {
               var upperIdx = layerOrder[rowIdx];
               var lowerIdx = layerOrder[rowIdx + 1];
@@ -428,7 +414,6 @@ function WindHeatMap({ allHours, selectedIdx, onSelect }) {
             }
             return items;
           })}
-          {/* X-axis hour labels */}
           <div style={{ display: "flex", height: 14, marginTop: 2 }}>
             {allHours.map(function(h, i) {
               if (i % 2 !== 0 && allHours.length > 8) return <div key={i} style={{ flex: 1 }}></div>;
@@ -453,6 +438,7 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect, useMph }) {
   var cloudIcon = cloudPct<10?"fa-solid fa-sun":cloudPct<25?"fa-solid fa-sun":cloudPct<50?"fa-solid fa-cloud-sun":cloudPct<75?"fa-solid fa-cloud-sun":cloudPct<90?"fa-solid fa-cloud":"fa-solid fa-cloud-showers-heavy";
   var cloudIconColor = cloudPct<10?"#fbbf24":cloudPct<25?"#eab308":cloudPct<50?"#eab308":cloudPct<75?"#f97316":cloudPct<90?"#94a3b8":"#64748b";
   var cloudLabel = cloudPct<10?"Clear":cloudPct<25?"Mostly clear":cloudPct<50?"Partly cloudy":cloudPct<75?"Mostly cloudy":cloudPct<90?"Overcast":"Socked in";
+  var tPen = hour.thermalPenalty || 0;
 
   return (
     <div style={{ background:"rgba(255,255,255,0.025)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:10, padding:14, marginTop:12 }}>
@@ -480,37 +466,64 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect, useMph }) {
         </div>
       </div>
 
-      {/* Wind + Cloud summary row */}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:12 }}>
+      {/* Three-column summary row: Wind Score | Thermals | Cloud Cover */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:12 }}>
+
+        {/* Wind Score card */}
         <div style={{ background:"rgba(255,255,255,0.03)", borderRadius:7, padding:"8px 10px", borderLeft:"3px solid hsl("+windHue+",70%,50%)" }}>
-          <div style={{ fontSize:9, color:"#64748b", textTransform:"uppercase", letterSpacing:0.5, marginBottom:2 }}>Wind Score</div>
+          <div style={{ fontSize:9, color:"#64748b", textTransform:"uppercase", letterSpacing:0.5, marginBottom:2 }}>Wind</div>
           <div style={{ display:"flex", alignItems:"baseline", gap:4 }}>
             <span style={{ fontSize:18, fontWeight:700, color:"hsl("+windHue+",75%,55%)", fontFamily:"'JetBrains Mono',monospace" }}>{hour.windScore}</span>
             <span style={{ fontSize:10, color:"#64748b" }}>/ 100</span>
           </div>
         </div>
+
+        {/* Thermals card */}
+        <div style={{ background:"rgba(255,255,255,0.03)", borderRadius:7, padding:"8px 10px", borderLeft:thermalBorder(tPen) }}>
+          <div style={{ fontSize:9, color:"#64748b", textTransform:"uppercase", letterSpacing:0.5, marginBottom:2 }}>Thermals</div>
+          <div style={{ display:"flex", alignItems:"baseline", gap:3, marginBottom:5 }}>
+            <span style={{ fontSize:18, fontWeight:700, color:thermalColor(tPen), fontFamily:"'JetBrains Mono',monospace" }}>
+              {tPen > 0 ? "-" : ""}{tPen}
+            </span>
+            <span style={{ fontSize:9, color:"#64748b" }}>pts</span>
+            <span style={{ fontSize:9, color:thermalColor(tPen), marginLeft:2, fontWeight:600 }}>{thermalLabel(tPen)}</span>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:2, fontSize:9 }}>
+            <div style={{ display:"flex", justifyContent:"space-between" }}>
+              <span style={{ color:"#64748b" }}>SHF</span>
+              <span style={{ color:"#94a3b8", fontFamily:"'JetBrains Mono',monospace" }}>{Math.round(hour.sensibleHeatFlux || 0)}<span style={{ color:"#475569" }}> W/m²</span></span>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between" }}>
+              <span style={{ color:"#64748b" }}>PBL</span>
+              <span style={{ color:"#94a3b8", fontFamily:"'JetBrains Mono',monospace" }}>{Math.round(hour.pblHeight || 0)}<span style={{ color:"#475569" }}> m</span></span>
+            </div>
+          </div>
+        </div>
+
+        {/* Cloud Cover card */}
         <div style={{ background:"rgba(255,255,255,0.03)", borderRadius:7, padding:"8px 10px", borderLeft: cloudPct<25?"3px solid #22c55e":cloudPct<50?"3px solid #eab308":cloudPct<75?"3px solid #f97316":"3px solid #ef4444" }}>
           <div style={{ fontSize:9, color:"#64748b", textTransform:"uppercase", letterSpacing:0.5, marginBottom:4 }}>Cloud Cover</div>
           <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6 }}>
             <i className={cloudIcon} style={{ fontSize:14, color:cloudIconColor }}></i>
             <span style={{ fontSize:15, fontWeight:700, color:"#e2e8f0", fontFamily:"'JetBrains Mono',monospace" }}>{cloudPct}%</span>
-            <span style={{ fontSize:10, color:"#64748b" }}>{cloudLabel}</span>
           </div>
-          <div style={{ display:"flex", gap:8, fontSize:9 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:3 }}>
-              <span style={{ color:"#64748b" }}>Low</span>
+          <div style={{ fontSize:9, color:"#64748b", marginBottom:4 }}>{cloudLabel}</div>
+          <div style={{ display:"flex", gap:6, fontSize:9 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:2 }}>
+              <span style={{ color:"#64748b" }}>Lo</span>
               <span style={{ color: hour.cloudLow>50?"#ef4444":hour.cloudLow>25?"#f97316":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{Math.round(hour.cloudLow)}%</span>
             </div>
-            <div style={{ display:"flex", alignItems:"center", gap:3 }}>
-              <span style={{ color:"#64748b" }}>Mid</span>
+            <div style={{ display:"flex", alignItems:"center", gap:2 }}>
+              <span style={{ color:"#64748b" }}>Mi</span>
               <span style={{ color: hour.cloudMid>50?"#f97316":hour.cloudMid>25?"#eab308":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{Math.round(hour.cloudMid)}%</span>
             </div>
-            <div style={{ display:"flex", alignItems:"center", gap:3 }}>
-              <span style={{ color:"#64748b" }}>High</span>
+            <div style={{ display:"flex", alignItems:"center", gap:2 }}>
+              <span style={{ color:"#64748b" }}>Hi</span>
               <span style={{ color: hour.cloudHigh>50?"#eab308":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{Math.round(hour.cloudHigh)}%</span>
             </div>
           </div>
         </div>
+
       </div>
 
       {/* Multi-layer wind speed chart */}
@@ -579,7 +592,7 @@ function DayCard({ date, hours, isToday, useMph }) {
 function App() {
   var [data,setData]=useState(null), [loading,setLoading]=useState(true), [error,setError]=useState(null);
   var [lat,setLat]=useState(35.08), [lon,setLon]=useState(-85.29), [loc,setLoc]=useState("Chattanooga, TN");
-  var [timeFilter,setTimeFilter]=useState("daylight"); /* "all", "daylight", "morning" */
+  var [timeFilter,setTimeFilter]=useState("daylight");
   var [selectedDay,setSelectedDay]=useState(0);
   var [searchQuery,setSearchQuery]=useState("");
   var [searchResults,setSearchResults]=useState([]);
@@ -590,9 +603,7 @@ function App() {
   var [infoHtml,setInfoHtml]=useState("");
   var [weekAnim,setWeekAnim]=useState(false);
 
-  function toggleInfo() {
-    setShowInfo(!showInfo);
-  }
+  function toggleInfo() { setShowInfo(!showInfo); }
 
   useEffect(function(){
     fetch("https://api.github.com/repos/uotw/solarseeing/readme",{headers:{Accept:"application/vnd.github.html+json"}})
@@ -645,8 +656,10 @@ function App() {
 
   var fetchData = useCallback(function() {
     setLoading(true); setError(null);
-    var ps=[]; [850,700,500,250].forEach(function(l){ps.push("wind_speed_"+l+"hPa","wind_direction_"+l+"hPa");});
+    var ps=[];
+    [850,700,500,250].forEach(function(l){ps.push("wind_speed_"+l+"hPa","wind_direction_"+l+"hPa");});
     ps.push("is_day","cloud_cover","cloud_cover_low","cloud_cover_mid","cloud_cover_high");
+    ps.push("sensible_heat_flux","boundary_layer_height");
     var url = "https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon
       +"&hourly="+ps.join(",")
       +"&daily=sunrise,sunset"
@@ -655,7 +668,6 @@ function App() {
     .then(function(r){if(!r.ok)throw new Error("API "+r.status);return r.json();})
     .then(function(j){
       if(j.error) throw new Error(j.reason||"API error");
-      /* Build sunrise lookup: date string -> sunrise hour */
       var sunriseMap = {};
       if (j.daily && j.daily.time && j.daily.sunrise) {
         j.daily.time.forEach(function(dt, idx) {
@@ -670,19 +682,21 @@ function App() {
         var cloudLow=(j.hourly.cloud_cover_low||[])[i]||0;
         var cloudMid=(j.hourly.cloud_cover_mid||[])[i]||0;
         var cloudHigh=(j.hourly.cloud_cover_high||[])[i]||0;
-        /* Effective cloud: low clouds block completely, mid mostly, high partially */
         var effCloud = Math.min(100, cloudLow + cloudMid*0.8 + cloudHigh*0.3);
-        effCloud = Math.max(effCloud, cloudTotal); /* never better than total */
-        /* Cloud multiplier: SHG only needs a 2-min clear window, so partly cloudy is fine.
-           Clouds affect probability of getting a window, not image quality. */
+        effCloud = Math.max(effCloud, cloudTotal);
         var cloudMult = effCloud<10?1.0 : effCloud<30?0.95 : effCloud<50?0.9 : effCloud<70?0.8 : effCloud<85?0.5 : effCloud<95?0.2 : 0.05;
-        var finalScore = Math.round(windScore * cloudMult);
-        /* get sunrise hour for this date */
+        /* Boundary layer thermal scoring (Andreas 1988, Quatresooz 2023, Beason 2024) */
+        var shf=(j.hourly.sensible_heat_flux||[])[i]||0;
+        var pblH=(j.hourly.boundary_layer_height||[])[i]||0;
+        var tPen=thermalPenalty(shf,pblH);
+        var thermalAdjScore=Math.max(0,windScore-tPen);
+        var finalScore = Math.round(thermalAdjScore * cloudMult);
         var dateStr = t.substring(0,10);
         var sunriseHour = sunriseMap[dateStr] || 6;
         return{time:t,isDay:j.hourly.is_day[i],layers:layers,windScore:windScore,
           cloud:cloudTotal,cloudLow:cloudLow,cloudMid:cloudMid,cloudHigh:cloudHigh,effCloud:effCloud,
-          cloudMult:cloudMult,score:finalScore,shearPenalty:shearPenalty(layers),sunriseHour:sunriseHour};
+          cloudMult:cloudMult,score:finalScore,shearPenalty:shearPenalty(layers),sunriseHour:sunriseHour,
+          sensibleHeatFlux:shf,pblHeight:pblH,thermalPenalty:tPen};
       });
       setData(hrs); setLoading(false); setWeekAnim(false); setTimeout(function(){setWeekAnim(true);},50);
     }).catch(function(e){setError(e.message);setLoading(false);});
@@ -711,7 +725,7 @@ function App() {
               <i className={showInfo?"fa-solid fa-circle-xmark":"fa-solid fa-circle-info"} style={{fontSize:13,color:"#475569"}}></i>
             </button>
           </div>
-          <svg className="taper-line" width="320" height="4" viewBox="0 0 320 4" style={{display:"block",margin:"2px auto 5px"}}>
+          <svg className="taper-line" width="320" height="4" viewBox="0 0 320 4" style={{display:"block",margin:"4px auto 5px"}}>
             <defs>
               <linearGradient id="taper-alpha" x1="0" y1="0" x2="1" y2="0">
                 <stop offset="0%" stopColor="#e2e8f0" stopOpacity="0"/>
@@ -773,8 +787,8 @@ function App() {
             </div>
           </div>
         )}
+
         <div style={{marginBottom:12}}>
-          {/* Location display and controls */}
           <div style={{display:"flex",gap:6,justifyContent:"center",alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
             <button onClick={doGeolocate} disabled={geoLoading}
               style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,padding:"6px 10px",color:"#94a3b8",fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
@@ -808,13 +822,13 @@ function App() {
             </div>
             <button onClick={fetchData} style={{background:"rgba(251,191,36,0.15)",border:"1px solid rgba(251,191,36,0.3)",borderRadius:7,padding:"6px 12px",color:"#fbbf24",fontSize:12,fontWeight:600,cursor:"pointer"}}>Refresh</button>
           </div>
-          {/* Current location display */}
           <div style={{textAlign:"center",fontSize:12,color:"#94a3b8",marginBottom:4}}>
             <i className="fa-solid fa-map-pin" style={{fontSize:10,color:"#fbbf24",marginRight:5}}></i>
             <span style={{fontWeight:600,color:"#cbd5e1"}}>{loc}</span>
             <span style={{fontSize:10,color:"#475569",marginLeft:8,fontFamily:"'JetBrains Mono',monospace"}}>{lat}, {lon}</span>
           </div>
         </div>
+
         <div style={{display:"flex",justifyContent:"center",marginBottom:14}}>
           <div style={{display:"flex",background:"rgba(255,255,255,0.04)",borderRadius:7,border:"1px solid rgba(255,255,255,0.08)",overflow:"hidden"}}>
             {[["all","All Hours"],["daylight","Daylight"],["morning","Morning"]].map(function(opt){
@@ -829,13 +843,17 @@ function App() {
             })}
           </div>
         </div>
+
         <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:12,flexWrap:"wrap",fontSize:10,color:"#64748b"}}>
-          <span style={{color:"#22c55e"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>80+ Excellent</span><span style={{color:"#eab308"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>65-79 Good</span><span style={{color:"#f97316"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>45-64 Decent</span><span style={{color:"#ef4444"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>25-44 Poor</span><span style={{color:"#991b1b"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>&lt;25 Bad</span>
+          <span style={{color:"#22c55e"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>80+ Excellent</span>
+          <span style={{color:"#eab308"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>65-79 Good</span>
+          <span style={{color:"#f97316"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>45-64 Decent</span>
+          <span style={{color:"#ef4444"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>25-44 Poor</span>
+          <span style={{color:"#991b1b"}}><i className="fa-solid fa-circle" style={{fontSize:6,marginRight:3}}></i>&lt;25 Bad</span>
         </div>
 
         {loading && (
           <div>
-            {/* Skeleton week overview */}
             <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,padding:"16px 16px 14px",marginBottom:20}}>
               <div className="skel" style={{width:220,height:14,margin:"0 auto 16px",borderRadius:6}}></div>
               <div style={{display:"flex",gap:4,justifyContent:"center"}}>
@@ -850,9 +868,7 @@ function App() {
                 })}
               </div>
             </div>
-            {/* Skeleton day card */}
             <div style={{background:"rgba(255,255,255,0.015)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,padding:"16px 16px 14px"}}>
-              {/* Header */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
                 <div className="skel" style={{width:140,height:16,borderRadius:6}}></div>
                 <div style={{display:"flex",gap:14}}>
@@ -860,7 +876,6 @@ function App() {
                   <div className="skel" style={{width:40,height:28,borderRadius:6}}></div>
                 </div>
               </div>
-              {/* Bar chart */}
               <div style={{display:"flex",alignItems:"flex-end",height:140,gap:2}}>
                 {[60,55,50,65,70,68,62,50,40,35,30,25].map(function(h,i){
                   return <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center"}}>
@@ -870,9 +885,7 @@ function App() {
                   </div>;
                 })}
               </div>
-              {/* Detail panel */}
               <div style={{background:"rgba(255,255,255,0.025)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:10,padding:14,marginTop:12}}>
-                {/* Score row */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <div className="skel" style={{width:44,height:32,borderRadius:6}}></div>
@@ -883,26 +896,17 @@ function App() {
                   </div>
                   <div className="skel" style={{width:70,height:24,borderRadius:5}}></div>
                 </div>
-                {/* Wind + cloud row */}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-                  <div style={{background:"rgba(255,255,255,0.03)",borderRadius:7,padding:"8px 10px",borderLeft:"3px solid rgba(255,255,255,0.1)"}}>
-                    <div className="skel" style={{width:70,height:8,borderRadius:3,marginBottom:6}}></div>
-                    <div className="skel" style={{width:50,height:18,borderRadius:4}}></div>
-                  </div>
-                  <div style={{background:"rgba(255,255,255,0.03)",borderRadius:7,padding:"8px 10px",borderLeft:"3px solid rgba(255,255,255,0.1)"}}>
-                    <div className="skel" style={{width:80,height:8,borderRadius:3,marginBottom:6}}></div>
-                    <div className="skel" style={{width:60,height:18,borderRadius:4}}></div>
-                  </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+                  {[0,1,2].map(function(i){
+                    return <div key={i} style={{background:"rgba(255,255,255,0.03)",borderRadius:7,padding:"8px 10px",borderLeft:"3px solid rgba(255,255,255,0.1)"}}>
+                      <div className="skel" style={{width:50,height:8,borderRadius:3,marginBottom:6,animationDelay:(i*0.1)+"s"}}></div>
+                      <div className="skel" style={{width:40,height:18,borderRadius:4,animationDelay:(i*0.1)+"s"}}></div>
+                    </div>;
+                  })}
                 </div>
-                {/* Wind chart */}
                 <div style={{marginBottom:10}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                    <div className="skel" style={{width:100,height:8,borderRadius:3}}></div>
-                    <div className="skel" style={{width:160,height:8,borderRadius:3}}></div>
-                  </div>
                   <div className="skel" style={{width:"100%",height:110,borderRadius:6}}></div>
                 </div>
-                {/* Layer cards */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
                   {[0,1,2,3].map(function(i){
                     var colors=["#22d3ee","#818cf8","#fb923c","#f472b6"];
@@ -911,11 +915,7 @@ function App() {
                         <div className="skel" style={{width:40,height:10,borderRadius:3,animationDelay:(i*0.1)+"s"}}></div>
                         <div className="skel" style={{width:50,height:8,borderRadius:3,animationDelay:(i*0.1)+"s"}}></div>
                       </div>
-                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                        <div className="skel" style={{width:55,height:16,borderRadius:4,animationDelay:(i*0.1)+"s"}}></div>
-                        <div className="skel" style={{width:60,height:12,borderRadius:3,animationDelay:(i*0.1)+"s"}}></div>
-                      </div>
-                      <div className="skel" style={{width:"100%",height:3,borderRadius:2,animationDelay:(i*0.1)+"s"}}></div>
+                      <div className="skel" style={{width:55,height:16,borderRadius:4,animationDelay:(i*0.1)+"s"}}></div>
                     </div>;
                   })}
                 </div>
@@ -923,20 +923,19 @@ function App() {
             </div>
           </div>
         )}
+
         {error && <div style={{padding:16,color:"#ef4444",background:"rgba(239,68,68,0.05)",borderRadius:10,fontSize:12,wordBreak:"break-all"}}><strong>Error:</strong> {error}</div>}
+
         {!loading && !error && data && (function(){
           var entries = Object.entries(grp);
-          /* Weekly overview */
           var weekData = entries.map(function(e) {
             var date=e[0], hrs=e[1];
-            /* best score from the filtered hours shown */
             var best = hrs.reduce(function(b,h){return h.score>b.score?h:b;},hrs[0]);
             var dayAvg = Math.round(hrs.reduce(function(s,h){return s+h.score;},0)/hrs.length);
             return {date:date, bestScore:best.score, bestTime:fmtH(best.time), avg:dayAvg, isToday:date===todayStr};
           });
           return (
             <div>
-              {/* Week overview card — clickable day selector */}
               <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,padding:"16px 16px 14px",marginBottom:20}}>
                 <div style={{fontSize:13,fontWeight:700,color:"#94a3b8",marginBottom:14,textAlign:"center"}}>7-Day Forecast &mdash; Best {timeFilter==="morning"?"Morning":timeFilter==="daylight"?"Daytime":""} Seeing</div>
                 <div style={{display:"flex",gap:4,alignItems:"flex-end",justifyContent:"center"}}>
@@ -953,22 +952,16 @@ function App() {
                         borderRadius: 10, padding: "8px 4px 6px",
                         transition:"background 0.2s",
                       }}>
-                        {/* Score */}
                         <span style={{fontSize:16,fontWeight:800,color:"hsl("+hue+",75%,55%)",fontFamily:"'JetBrains Mono',monospace",marginBottom:2,opacity:weekAnim?1:0,transition:"opacity 0.4s ease "+(i*0.06)+"s"}}>{score}</span>
-                        {/* Verdict */}
                         <span style={{fontSize:8,fontWeight:600,color:"hsl("+hue+",60%,45%)",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5,opacity:weekAnim?1:0,transition:"opacity 0.4s ease "+(i*0.06)+"s"}}>{scoreText(score)}</span>
-                        {/* Bar */}
                         <div style={{width:"100%",maxWidth:50,height:weekAnim?barH:0,borderRadius:5,background:"hsl("+hue+",65%,"+(isSel?"42%":"32%")+")",transition:"height 0.6s cubic-bezier(0.34,1.56,0.64,1) "+(i*0.06)+"s, background 0.3s"}} />
-                        {/* Best time */}
                         <span style={{fontSize:9,color:"#64748b",marginTop:4,fontFamily:"'JetBrains Mono',monospace",opacity:weekAnim?1:0,transition:"opacity 0.3s ease "+(i*0.06+0.3)+"s"}}>{d.bestTime}</span>
-                        {/* Day name */}
                         <span style={{fontSize:10,fontWeight:isSel||d.isToday?700:500,color:isSel?"#efefef":d.isToday?"rgba(239,239,239,0.7)":"#94a3b8",marginTop:2,opacity:weekAnim?1:0,transition:"opacity 0.3s ease "+(i*0.06+0.3)+"s"}}>{dayName}</span>
                       </div>
                     );
                   })}
                 </div>
               </div>
-              {/* Single selected day card */}
               {entries[selectedDay] && (
                 <DayCard key={entries[selectedDay][0]} date={entries[selectedDay][0]} hours={entries[selectedDay][1]} isToday={entries[selectedDay][0]===todayStr} useMph={useMph}/>
               )}
@@ -987,5 +980,6 @@ function App() {
 
 ReactDOM.render(<App/>, document.getElementById("root"));
 </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"3354f9e18d3443f0ab9347b432d9b181","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
