@@ -33,6 +33,9 @@
   .skel { background: rgba(255,255,255,0.06); border-radius: 4px; animation: shimmer 1.5s ease-in-out infinite; }
   @keyframes taper-grow { 0% { transform: scaleX(0); opacity: 0; } 60% { opacity: 1; } 100% { transform: scaleX(1); opacity: 1; } }
   .taper-line { transform-origin: center; animation: taper-grow 0.8s cubic-bezier(0.16,1,0.3,1) 0.2s both; }
+  @keyframes slideOutLeft  { from { transform:translateX(0);    opacity:1; } to { transform:translateX(-90px); opacity:0; } }
+  @keyframes slideOutRight { from { transform:translateX(0);    opacity:1; } to { transform:translateX( 90px); opacity:0; } }
+  @keyframes slideInRight  { from { transform:translateX(60px); opacity:0; } to { transform:translateX(0);     opacity:1; } }
 </style>
 </head>
 <body>
@@ -142,6 +145,30 @@ function fmtDate(t) { return new Date(t).toLocaleDateString("en-US",{weekday:"sh
 function fmtWind(ms, mph) { return mph ? Math.round(ms*2.237) : ms.toFixed(1); }
 function windUnit(mph) { return mph ? "mph" : "m/s"; }
 
+/* Animates a number from its previous value to a new target on each change. */
+function useAnimatedNumber(target, duration) {
+  duration = duration || 350;
+  var [display, setDisplay] = useState(target);
+  var fromRef = React.useRef(target);
+  useEffect(function() {
+    var from = fromRef.current;
+    if (from === target) { setDisplay(target); return; }
+    var startTime = null;
+    var rafId;
+    function step(ts) {
+      if (!startTime) startTime = ts;
+      var p = Math.min((ts - startTime) / duration, 1);
+      var ease = 1 - Math.pow(1 - p, 3);
+      setDisplay(Math.round(from + (target - from) * ease));
+      if (p < 1) rafId = requestAnimationFrame(step);
+      else fromRef.current = target;
+    }
+    rafId = requestAnimationFrame(step);
+    return function() { cancelAnimationFrame(rafId); };
+  }, [target]);
+  return display;
+}
+
 function thermalColor(pen) {
   if (pen < 5)  return "#22c55e";
   if (pen < 15) return "#eab308";
@@ -161,37 +188,121 @@ function thermalLabel(pen) {
   return "Severe";
 }
 
-function SeeingChart({ hours, selectedIdx, onSelect, currentIdx }) {
+function SeeingChart({ hours, date, selectedIdx, onSelect, currentIdx }) {
   var cH = 140;
-  var [animated, setAnimated] = useState(false);
-  useEffect(function(){ var t=setTimeout(function(){setAnimated(true);},50); return function(){clearTimeout(t);}; },[]);
+  var barMaxW = hours.length <= 6 ? 50 : hours.length <= 10 ? 36 : hours.length <= 16 ? 30 : 26;
+  var [animated,     setAnimated]     = useState(false);
+  var [displayHours, setDisplayHours] = useState(hours);
+  var [exitSet,      setExitSet]      = useState(new Set());
+  var [enterSet,     setEnterSet]     = useState(new Set());
+  var _transRef    = React.useRef(null);
+  var _hoursKeyRef = React.useRef('');
+  var _dateRef     = React.useRef(date);
+
+  useEffect(function() {
+    var t = setTimeout(function(){ setAnimated(true); }, 30);
+    return function(){ clearTimeout(t); };
+  }, []);
+
+  useEffect(function() {
+    var key = hours.length > 0
+      ? hours[0].time + '_' + hours.length + '_' + hours[hours.length - 1].time : '';
+    if (key === _hoursKeyRef.current) return;
+    _hoursKeyRef.current = key;
+
+    if (_transRef.current) {
+      clearTimeout(_transRef.current);
+      _transRef.current = null;
+      setExitSet(new Set());
+      setEnterSet(new Set());
+      setDisplayHours(hours);
+      setAnimated(false);
+      setTimeout(function(){ setAnimated(true); }, 30);
+      return;
+    }
+
+    if (date !== _dateRef.current) {
+      _dateRef.current = date;
+      setExitSet(new Set());
+      setEnterSet(new Set());
+      setDisplayHours(hours);
+      setAnimated(false);
+      setTimeout(function(){ setAnimated(true); }, 30);
+      return;
+    }
+
+    var newSet   = new Set(hours.map(function(h){ return h.time; }));
+    var curSet   = new Set(displayHours.filter(function(h){ return !exitSet.has(h.time); }).map(function(h){ return h.time; }));
+    var removing = [...curSet].filter(function(t){ return !newSet.has(t); });
+    var adding   = hours.filter(function(h){ return !curSet.has(h.time); }).map(function(h){ return h.time; });
+
+    if (removing.length === 0 && adding.length === 0) { setDisplayHours(hours); return; }
+
+    if (removing.length > 0) {
+      setExitSet(new Set(removing));
+      _transRef.current = setTimeout(function() {
+        _transRef.current = null;
+        setDisplayHours(hours);
+        setExitSet(new Set());
+        if (adding.length > 0) {
+          setEnterSet(new Set(adding));
+          requestAnimationFrame(function(){ requestAnimationFrame(function(){ setEnterSet(new Set()); }); });
+        }
+      }, 320);
+    } else {
+      setDisplayHours(hours);
+      setEnterSet(new Set(adding));
+      requestAnimationFrame(function(){ requestAnimationFrame(function(){ setEnterSet(new Set()); }); });
+    }
+  }, [hours]);
+
   return (
     <div style={{ width:"100%", overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
-      <div style={{ display:"flex", alignItems:"flex-end", height:cH+32, minWidth: hours.length*34, padding:"0 2px" }}>
-        {hours.map(function(h,i) {
-          var bH = Math.max(4, (h.score/100)*cH);
+      <div style={{ display:"flex", alignItems:"flex-end", height:cH+32,
+                    minWidth: displayHours.filter(function(h){ return !exitSet.has(h.time); }).length * 34,
+                    padding:"0 2px" }}>
+        {displayHours.map(function(h) {
+          var isExiting  = exitSet.has(h.time);
+          var isEntering = enterSet.has(h.time);
+          var collapsing = isExiting || isEntering;
+          var actualIdx  = hours.findIndex(function(hr){ return hr.time === h.time; });
+          var sel = actualIdx === selectedIdx;
+          var cur = actualIdx === currentIdx;
+          var bH  = Math.max(4, (h.score/100)*cH);
           var hue = scoreHue(h.score);
-          var sel = i===selectedIdx;
-          var cur = i===currentIdx;
           return (
-            <div key={i} onClick={function(){onSelect(i)}} style={{
-              flex:1, display:"flex", flexDirection:"column", alignItems:"center", cursor:"pointer", minWidth:28, padding:"2px 1px 0",
-              background: sel ? "rgba(255,255,255,0.06)" : "transparent",
-              borderRadius: 6,
-              transition: "background 0.15s",
-            }}>
-              <div style={{ display:"flex", alignItems:"center", gap:2, marginBottom:2, opacity: animated?1:0, transition:"opacity 0.4s ease "+((i*0.03)+"s") }}>
-                <span style={{ fontSize:9, fontWeight:700, color: "hsl("+hue+",60%,"+(sel?"60%":"45%")+")", fontFamily:"'JetBrains Mono',monospace", transition:"color 0.15s" }}>{h.score}</span>
-                {h.effCloud>=25 && <i className={h.effCloud>=75?"fa-solid fa-cloud":"fa-solid fa-cloud-sun"} style={{ fontSize:6, color: h.effCloud>=75?"#ef4444":h.effCloud>=50?"#f97316":"#eab308", opacity:0.7 }}></i>}
-              </div>
-              <div style={{
-                width:"100%", maxWidth:26, height: animated?bH:0, borderRadius:3,
-                background: "hsl("+hue+",55%,"+(sel?"42%":"32%")+")",
-                border: cur ? "2px solid rgba(239,239,239,0.7)" : "none",
-                transition:"height 0.5s cubic-bezier(0.34,1.56,0.64,1) "+((i*0.03)+"s")+", background 0.15s",
+            <div key={h.time}
+              onClick={function(){ if (!collapsing && actualIdx >= 0) onSelect(actualIdx); }}
+              style={{
+                flex: collapsing ? "0 0 0px" : 1,
+                minWidth: collapsing ? 0 : 28,
+                overflow: "hidden",
+                display:"flex", flexDirection:"column", alignItems:"center",
+                cursor: collapsing ? "default" : "pointer",
+                padding: collapsing ? "0" : "2px 1px 0",
+                opacity: isExiting ? 0 : 1,
+                background: sel ? "rgba(255,255,255,0.06)" : "transparent",
+                borderRadius: 6,
+                transition: "flex 0.3s ease, min-width 0.3s ease, opacity 0.2s ease, padding 0.1s ease, background 0.15s",
               }}>
+              <div style={{
+                display:"flex", flexDirection:"column", alignItems:"center", width:"100%",
+                transform: isEntering ? "translateX(40px)" : "translateX(0)",
+                opacity: isEntering ? 0 : 1,
+                transition: "transform 0.3s ease, opacity 0.25s ease",
+              }}>
+                <div style={{ display:"flex", alignItems:"center", gap:2, marginBottom:2, opacity: animated?1:0, transition:"opacity 0.35s ease" }}>
+                  <span style={{ fontSize:9, fontWeight:700, color:"hsl("+hue+",60%,"+(sel?"60%":"45%")+")", fontFamily:"'JetBrains Mono',monospace", transition:"color 0.15s" }}>{h.score}</span>
+                  {h.effCloud>=25 && <i className={h.effCloud>=75?"fa-solid fa-cloud":"fa-solid fa-cloud-sun"} style={{ fontSize:6, color:h.effCloud>=75?"#ef4444":h.effCloud>=50?"#f97316":"#eab308", opacity:0.7 }}></i>}
+                </div>
+                <div style={{
+                  width:"100%", maxWidth:barMaxW, height: animated?bH:0, borderRadius:3,
+                  background:"hsl("+hue+",55%,"+(sel?"42%":"32%")+")",
+                  border: cur ? "2px solid rgba(239,239,239,0.7)" : "none",
+                  transition:"height 0.5s cubic-bezier(0.34,1.56,0.64,1), background 0.15s, max-width 0.35s ease",
+                }} />
+                <span style={{ fontSize:8, marginTop:3, color:cur?"#efefef":sel?"#cbd5e1":"#64748b", fontFamily:"'JetBrains Mono',monospace", fontWeight:cur?700:400, opacity:animated?1:0, transition:"opacity 0.35s ease 0.1s" }}>{fmtH(h.time)}</span>
               </div>
-              <span style={{ fontSize:8, marginTop:3, color: cur?"#efefef": sel?"#cbd5e1":"#64748b", fontFamily:"'JetBrains Mono',monospace", fontWeight: cur?700:400, opacity: animated?1:0, transition:"opacity 0.3s ease "+((i*0.03+0.2)+"s") }}>{fmtH(h.time)}</span>
             </div>
           );
         })}
@@ -200,7 +311,69 @@ function SeeingChart({ hours, selectedIdx, onSelect, currentIdx }) {
   );
 }
 
-function WindLayerChart({ allHours, selectedIdx, onSelect, useMph }) {
+function WindLayerChart({ allHours: allHoursProp, selectedIdx, onSelect, useMph }) {
+  var [displayHours, setDisplayHours] = useState(allHoursProp || []);
+  var _windAnimRef = React.useRef(null);
+  useEffect(function() {
+    if (!allHoursProp || allHoursProp.length === 0) { setDisplayHours([]); return; }
+    var from = displayHours;
+    /* if length changed (different filter), snap immediately */
+    if (!from || from.length !== allHoursProp.length) { setDisplayHours(allHoursProp); return; }
+    var to = allHoursProp;
+    var startTime = null;
+    if (_windAnimRef.current) cancelAnimationFrame(_windAnimRef.current);
+    function step(ts) {
+      if (!startTime) startTime = ts;
+      var p = Math.min((ts - startTime) / 450, 1);
+      var ease = 1 - Math.pow(1 - p, 3);
+      var interp = to.map(function(th, hi) {
+        var sh = from[hi] || th;
+        return Object.assign({}, th, {
+          layers: th.layers.map(function(tl, li) {
+            var sl = (sh.layers && sh.layers[li]) || tl;
+            return Object.assign({}, tl, { speed: sl.speed + (tl.speed - sl.speed) * ease });
+          })
+        });
+      });
+      setDisplayHours(interp);
+      if (p < 1) _windAnimRef.current = requestAnimationFrame(step);
+      else { setDisplayHours(to); _windAnimRef.current = null; }
+    }
+    _windAnimRef.current = requestAnimationFrame(step);
+    return function() { if (_windAnimRef.current) cancelAnimationFrame(_windAnimRef.current); };
+  }, [allHoursProp]);
+  /* Animate a fractional index so dots follow the line rather than cutting diagonally */
+  var [displayedIdx, setDisplayedIdx] = useState(selectedIdx >= 0 ? selectedIdx : 0);
+  var _idxAnimRef = React.useRef(null);
+  var _idxFromRef = React.useRef(selectedIdx >= 0 ? selectedIdx : 0);
+  /* On day change: snap immediately */
+  useEffect(function() {
+    if (_idxAnimRef.current) cancelAnimationFrame(_idxAnimRef.current);
+    var snap = selectedIdx >= 0 ? selectedIdx : 0;
+    setDisplayedIdx(snap);
+    _idxFromRef.current = snap;
+  }, [allHoursProp]);
+  /* On hour change within same day: animate the float index */
+  useEffect(function() {
+    if (selectedIdx < 0) return;
+    var from = _idxFromRef.current;
+    var to   = selectedIdx;
+    if (Math.abs(from - to) < 0.01) return;
+    if (_idxAnimRef.current) cancelAnimationFrame(_idxAnimRef.current);
+    var startTime = null;
+    function step(ts) {
+      if (!startTime) startTime = ts;
+      var p    = Math.min((ts - startTime) / 350, 1);
+      var ease = 1 - Math.pow(1 - p, 3);
+      var cur  = from + (to - from) * ease;
+      setDisplayedIdx(cur);
+      if (p < 1) _idxAnimRef.current = requestAnimationFrame(step);
+      else { _idxFromRef.current = to; _idxAnimRef.current = null; }
+    }
+    _idxAnimRef.current = requestAnimationFrame(step);
+    return function() { if (_idxAnimRef.current) cancelAnimationFrame(_idxAnimRef.current); };
+  }, [selectedIdx]);
+  var allHours = displayHours; /* shadow: rest of component unchanged */
   if (!allHours || allHours.length === 0) return null;
   var padL = 35;
   var padR = 10;
@@ -291,17 +464,35 @@ function WindLayerChart({ allHours, selectedIdx, onSelect, useMph }) {
             return <path key={pl.hpa} d={makePath(li)} fill="none" stroke={pl.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.8" vectorEffect="non-scaling-stroke" />;
           })}
           <path d={shearPath} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="4,3" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" vectorEffect="non-scaling-stroke" />
-          {selectedIdx >= 0 && selectedIdx < allHours.length && (
-            <line x1={hourX(selectedIdx)} y1={padT} x2={hourX(selectedIdx)} y2={padT + cH} stroke="rgba(239,239,239,0.5)" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" vectorEffect="non-scaling-stroke" />
-          )}
-          {selectedIdx >= 0 && selectedIdx < allHours.length && PRESSURE_LEVELS.map(function(pl, li) {
-            var x = hourX(selectedIdx);
-            var y = speedY(allHours[selectedIdx].layers[li].speed);
-            return <circle key={pl.hpa} cx={x} cy={y} r="4" fill={pl.color} stroke="#0f172a" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />;
-          })}
-          {selectedIdx >= 0 && selectedIdx < allHours.length && (
-            <circle cx={hourX(selectedIdx)} cy={shearY(shearPerHour[selectedIdx])} r="3" fill="#ef4444" stroke="#0f172a" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.7" />
-          )}
+          {selectedIdx >= 0 && selectedIdx < allHours.length && (function() {
+            /* Interpolate position along line using float displayedIdx */
+            var fi   = Math.max(0, Math.min(displayedIdx, allHours.length - 1));
+            var lo   = Math.floor(fi);
+            var hi   = Math.min(Math.ceil(fi), allHours.length - 1);
+            var frac = fi - lo;
+            var dispX = padL + fi * stepX;
+            function interpSpeed(layerIdx) {
+              var loS = allHours[lo] ? allHours[lo].layers[layerIdx].speed : 0;
+              var hiS = allHours[hi] ? allHours[hi].layers[layerIdx].speed : loS;
+              return loS + (hiS - loS) * frac;
+            }
+            var loShear = shearPerHour[lo] || 0;
+            var hiShear = shearPerHour[hi] || 0;
+            var dispShear = loShear + (hiShear - loShear) * frac;
+            return [
+              <line key="sel-line" x1={dispX} y1={padT} x2={dispX} y2={padT + cH}
+                stroke="rgba(239,239,239,0.5)" strokeWidth="1" strokeDasharray="3,3"
+                opacity="0.6" vectorEffect="non-scaling-stroke" />,
+              PRESSURE_LEVELS.map(function(pl, li) {
+                return <circle key={pl.hpa} cx={dispX} cy={speedY(interpSpeed(li))} r="4"
+                  fill={pl.color} stroke="#0f172a" strokeWidth="1.5"
+                  vectorEffect="non-scaling-stroke" />;
+              }),
+              <circle key="shear-dot" cx={dispX} cy={shearY(dispShear)} r="3"
+                fill="#ef4444" stroke="#0f172a" strokeWidth="1"
+                vectorEffect="non-scaling-stroke" opacity="0.7" />,
+            ];
+          })()}
           {allHours.map(function(h, i) {
             if (i % 2 !== 0 && allHours.length > 8) return null;
             var x = hourX(i);
@@ -430,24 +621,57 @@ function WindHeatMap({ allHours, selectedIdx, onSelect }) {
 
 function DetailPanel({ hour, allHours, selectedIdx, onSelect, useMph }) {
   if (!hour) return null;
-  var hue = scoreHue(hour.score);
-  var windHue = scoreHue(hour.windScore);
+  /* Single RAF loop — all values update in the same React render each frame */
+  var _mkTarget = function(h) { return {
+    score:    h.score,            windScore: h.windScore,
+    tPen:     h.thermalPenalty||0, cloud:    Math.round(h.effCloud),
+    shf:      Math.round(h.sensibleHeatFlux||0),
+    pbl:      Math.round(h.pblHeight||0),
+    cloudLo:  Math.round(h.cloudLow),
+    cloudMid: Math.round(h.cloudMid),
+    cloudHi:  Math.round(h.cloudHigh),
+  }; };
+  var [anim, setAnim] = useState(function(){ return _mkTarget(hour); });
+  var _animRef = React.useRef(null);
+  var _fromRef = React.useRef(anim);
+  useEffect(function() {
+    var from = _fromRef.current;
+    var to   = _mkTarget(hour);
+    if (_animRef.current) cancelAnimationFrame(_animRef.current);
+    var startTime = null;
+    function step(ts) {
+      if (!startTime) startTime = ts;
+      var p    = Math.min((ts - startTime) / 400, 1);
+      var ease = 1 - Math.pow(1 - p, 3);
+      var interp = {};
+      Object.keys(to).forEach(function(k) {
+        interp[k] = Math.round(from[k] + (to[k] - from[k]) * ease);
+      });
+      setAnim(interp);
+      if (p < 1) _animRef.current = requestAnimationFrame(step);
+      else { _fromRef.current = to; _animRef.current = null; }
+    }
+    _animRef.current = requestAnimationFrame(step);
+    return function() { if (_animRef.current) cancelAnimationFrame(_animRef.current); };
+  }, [hour]);
+  var hue      = scoreHue(anim.score);
+  var windHue  = scoreHue(anim.windScore);
+  var tPen     = anim.tPen;
+  var cloudPct = anim.cloud;
   var d = new Date(hour.time);
   var ts = d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
-  var cloudPct = Math.round(hour.effCloud);
   var cloudIcon = cloudPct<10?"fa-solid fa-sun":cloudPct<25?"fa-solid fa-sun":cloudPct<50?"fa-solid fa-cloud-sun":cloudPct<75?"fa-solid fa-cloud-sun":cloudPct<90?"fa-solid fa-cloud":"fa-solid fa-cloud-showers-heavy";
   var cloudIconColor = cloudPct<10?"#fbbf24":cloudPct<25?"#eab308":cloudPct<50?"#eab308":cloudPct<75?"#f97316":cloudPct<90?"#94a3b8":"#64748b";
   var cloudLabel = cloudPct<10?"Clear":cloudPct<25?"Mostly clear":cloudPct<50?"Partly cloudy":cloudPct<75?"Mostly cloudy":cloudPct<90?"Overcast":"Socked in";
-  var tPen = hour.thermalPenalty || 0;
 
   return (
     <div style={{ background:"rgba(255,255,255,0.025)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:10, padding:14, marginTop:12 }}>
       {/* Top row: score, wind score, cloud */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          <span style={{ fontSize:24, fontWeight:800, color:"hsl("+hue+",75%,55%)", fontFamily:"'JetBrains Mono',monospace" }}>{hour.score}</span>
+          <span style={{ fontSize:24, fontWeight:800, color:"hsl("+hue+",75%,55%)", fontFamily:"'JetBrains Mono',monospace" }}>{anim.score}</span>
           <div>
-            <div style={{ fontSize:13, fontWeight:600, color:scoreColor(hour.score) }}>{scoreText(hour.score)}</div>
+            <div style={{ fontSize:13, fontWeight:600, color:scoreColor(anim.score) }}>{scoreText(anim.score)}</div>
             <div style={{ fontSize:11, color:"#64748b" }}>{ts}</div>
           </div>
         </div>
@@ -473,7 +697,7 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect, useMph }) {
         <div style={{ background:"rgba(255,255,255,0.03)", borderRadius:7, padding:"8px 10px", borderLeft:"3px solid hsl("+windHue+",70%,50%)" }}>
           <div style={{ fontSize:9, color:"#64748b", textTransform:"uppercase", letterSpacing:0.5, marginBottom:2 }}>Wind</div>
           <div style={{ display:"flex", alignItems:"baseline", gap:4 }}>
-            <span style={{ fontSize:18, fontWeight:700, color:"hsl("+windHue+",75%,55%)", fontFamily:"'JetBrains Mono',monospace" }}>{hour.windScore}</span>
+            <span style={{ fontSize:18, fontWeight:700, color:"hsl("+windHue+",75%,55%)", fontFamily:"'JetBrains Mono',monospace" }}>{anim.windScore}</span>
             <span style={{ fontSize:10, color:"#64748b" }}>/ 100</span>
           </div>
         </div>
@@ -483,7 +707,7 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect, useMph }) {
           <div style={{ fontSize:9, color:"#64748b", textTransform:"uppercase", letterSpacing:0.5, marginBottom:2 }}>Thermals</div>
           <div style={{ display:"flex", alignItems:"baseline", gap:3, marginBottom:5 }}>
             <span style={{ fontSize:18, fontWeight:700, color:thermalColor(tPen), fontFamily:"'JetBrains Mono',monospace" }}>
-              {tPen > 0 ? "-" : ""}{tPen}
+              {tPen > 0 ? "-" : ""}{anim.tPen}
             </span>
             <span style={{ fontSize:9, color:"#64748b" }}>pts</span>
             <span style={{ fontSize:9, color:thermalColor(tPen), marginLeft:2, fontWeight:600 }}>{thermalLabel(tPen)}</span>
@@ -491,11 +715,11 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect, useMph }) {
           <div style={{ display:"flex", flexDirection:"column", gap:2, fontSize:9 }}>
             <div style={{ display:"flex", justifyContent:"space-between" }}>
               <span style={{ color:"#64748b" }}>SHF</span>
-              <span style={{ color:"#94a3b8", fontFamily:"'JetBrains Mono',monospace" }}>{Math.round(hour.sensibleHeatFlux || 0)}<span style={{ color:"#475569" }}> W/m²</span></span>
+              <span style={{ color:"#94a3b8", fontFamily:"'JetBrains Mono',monospace" }}>{anim.shf}<span style={{ color:"#475569" }}> W/m²</span></span>
             </div>
             <div style={{ display:"flex", justifyContent:"space-between" }}>
               <span style={{ color:"#64748b" }}>PBL</span>
-              <span style={{ color:"#94a3b8", fontFamily:"'JetBrains Mono',monospace" }}>{Math.round(hour.pblHeight || 0)}<span style={{ color:"#475569" }}> m</span></span>
+              <span style={{ color:"#94a3b8", fontFamily:"'JetBrains Mono',monospace" }}>{anim.pbl}<span style={{ color:"#475569" }}> m</span></span>
             </div>
           </div>
         </div>
@@ -505,21 +729,21 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect, useMph }) {
           <div style={{ fontSize:9, color:"#64748b", textTransform:"uppercase", letterSpacing:0.5, marginBottom:4 }}>Cloud Cover</div>
           <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6 }}>
             <i className={cloudIcon} style={{ fontSize:14, color:cloudIconColor }}></i>
-            <span style={{ fontSize:15, fontWeight:700, color:"#e2e8f0", fontFamily:"'JetBrains Mono',monospace" }}>{cloudPct}%</span>
+            <span style={{ fontSize:15, fontWeight:700, color:"#e2e8f0", fontFamily:"'JetBrains Mono',monospace" }}>{anim.cloud}%</span>
           </div>
           <div style={{ fontSize:9, color:"#64748b", marginBottom:4 }}>{cloudLabel}</div>
           <div style={{ display:"flex", gap:6, fontSize:9 }}>
             <div style={{ display:"flex", alignItems:"center", gap:2 }}>
               <span style={{ color:"#64748b" }}>Lo</span>
-              <span style={{ color: hour.cloudLow>50?"#ef4444":hour.cloudLow>25?"#f97316":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{Math.round(hour.cloudLow)}%</span>
+              <span style={{ color: hour.cloudLow>50?"#ef4444":hour.cloudLow>25?"#f97316":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{anim.cloudLo}%</span>
             </div>
             <div style={{ display:"flex", alignItems:"center", gap:2 }}>
               <span style={{ color:"#64748b" }}>Mi</span>
-              <span style={{ color: hour.cloudMid>50?"#f97316":hour.cloudMid>25?"#eab308":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{Math.round(hour.cloudMid)}%</span>
+              <span style={{ color: hour.cloudMid>50?"#f97316":hour.cloudMid>25?"#eab308":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{anim.cloudMid}%</span>
             </div>
             <div style={{ display:"flex", alignItems:"center", gap:2 }}>
               <span style={{ color:"#64748b" }}>Hi</span>
-              <span style={{ color: hour.cloudHigh>50?"#eab308":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{Math.round(hour.cloudHigh)}%</span>
+              <span style={{ color: hour.cloudHigh>50?"#eab308":"#94a3b8", fontFamily:"'JetBrains Mono',monospace", fontWeight:600 }}>{anim.cloudHi}%</span>
             </div>
           </div>
         </div>
@@ -547,7 +771,7 @@ function DetailPanel({ hour, allHours, selectedIdx, onSelect, useMph }) {
                 <span style={{ fontSize:11, color:"#94a3b8" }}>{dirLabel(l.direction)} {Math.round(l.direction)}&deg;</span>
               </div>
               <div style={{ marginTop:5, height:3, borderRadius:2, background:"rgba(255,255,255,0.06)" }}>
-                <div style={{ width:ls+"%", height:"100%", borderRadius:2, background:"hsl("+lh+",70%,50%)" }} />
+                <div style={{ width:ls+"%", height:"100%", borderRadius:2, background:"hsl("+lh+",70%,50%)", transition:"width 0.4s cubic-bezier(0.34,1.56,0.64,1), background 0.3s ease" }} />
               </div>
             </div>
           );
@@ -564,6 +788,15 @@ function DayCard({ date, hours, isToday, useMph }) {
   var defIdx = curIdx>=0 ? curIdx : hours.indexOf(best);
   var [sel, setSel] = useState(defIdx);
   var dayAvg = Math.round(hours.reduce(function(s,h){return s+h.score;},0)/hours.length);
+  /* Reset selected hour when day changes OR when filter changes (hours.length changes) */
+  useEffect(function() {
+    var nh = new Date().getHours();
+    var ci = isToday ? hours.findIndex(function(h){return new Date(h.time).getHours()===nh;}) : -1;
+    var b  = hours.reduce(function(bx,h){return h.score>bx.score?h:bx;},hours[0]);
+    setSel(ci>=0 ? ci : hours.indexOf(b));
+  }, [date, hours.length]);
+  /* Guard against stale sel being out-of-bounds during filter transitions */
+  var safeSel = (sel >= 0 && sel < hours.length) ? sel : defIdx;
 
   return (
     <div style={{ background:"rgba(255,255,255,0.015)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:14, padding:"16px 16px 14px", marginBottom:16 }}>
@@ -583,8 +816,8 @@ function DayCard({ date, hours, isToday, useMph }) {
           </div>
         </div>
       </div>
-      <SeeingChart hours={hours} selectedIdx={sel} onSelect={setSel} currentIdx={curIdx} />
-      <DetailPanel hour={hours[sel]} allHours={hours} selectedIdx={sel} onSelect={setSel} useMph={useMph} />
+      <SeeingChart hours={hours} date={date} selectedIdx={safeSel} onSelect={setSel} currentIdx={curIdx} />
+      <DetailPanel hour={hours[safeSel]} allHours={hours} selectedIdx={safeSel} onSelect={setSel} useMph={useMph} />
     </div>
   );
 }
@@ -600,6 +833,9 @@ function App() {
   var [geoLoading,setGeoLoading]=useState(false);
   var [useMph,setUseMph]=useState(true);
   var [showInfo,setShowInfo]=useState(false);
+  var [showCoords,setShowCoords]=useState(false);
+  var [latInput,setLatInput]=useState("");
+  var [lonInput,setLonInput]=useState("");
   var [infoHtml,setInfoHtml]=useState("");
   var [weekAnim,setWeekAnim]=useState(false);
 
@@ -632,7 +868,7 @@ function App() {
 
   function doSearch(q) {
     if (!q || q.length < 2) { setSearchResults([]); return; }
-    fetch("https://geocoding-api.open-meteo.com/v1/search?name="+encodeURIComponent(q)+"&count=5&language=en&format=json")
+    fetch("https://geocoding-api.open-meteo.com/v1/search?name="+encodeURIComponent(q)+"&count=10&language=en&format=json")
     .then(function(r){return r.json();})
     .then(function(j){
       if (j.results) setSearchResults(j.results);
@@ -651,6 +887,20 @@ function App() {
     setSearchQuery("");
     setSearchResults([]);
     setShowSearch(false);
+    setSelectedDay(0);
+  }
+
+  function doManualCoords() {
+    var la = parseFloat(latInput);
+    var lo = parseFloat(lonInput);
+    if (isNaN(la) || isNaN(lo) || la < -90 || la > 90 || lo < -180 || lo > 180) return;
+    setLat(Math.round(la * 100) / 100);
+    setLon(Math.round(lo * 100) / 100);
+    setLoc("Custom location");
+    setUseMph(isUSCoords(la, lo));
+    setShowCoords(false);
+    setLatInput("");
+    setLonInput("");
     setSelectedDay(0);
   }
 
@@ -707,7 +957,7 @@ function App() {
   var filt = data ? data.filter(function(h){
     if (timeFilter==="morning") {
       var hr=new Date(h.time).getHours();
-      return h.isDay===1 && hr>=h.sunriseHour && hr<=h.sunriseHour+4;
+      return h.isDay===1 && hr>=h.sunriseHour && hr<=h.sunriseHour+5;
     }
     if (timeFilter==="daylight") return h.isDay===1;
     return true;
@@ -821,7 +1071,31 @@ function App() {
               )}
             </div>
             <button onClick={fetchData} style={{background:"rgba(251,191,36,0.15)",border:"1px solid rgba(251,191,36,0.3)",borderRadius:7,padding:"6px 12px",color:"#fbbf24",fontSize:12,fontWeight:600,cursor:"pointer"}}>Refresh</button>
+            <button onClick={function(){setShowCoords(!showCoords);setShowSearch(false);}}
+              style={{background:showCoords?"rgba(99,102,241,0.2)":"rgba(255,255,255,0.05)",border:showCoords?"1px solid rgba(99,102,241,0.5)":"1px solid rgba(255,255,255,0.1)",borderRadius:7,padding:"6px 10px",color:showCoords?"#a5b4fc":"#94a3b8",fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+              <i className="fa-solid fa-crosshairs" style={{fontSize:11}}></i>
+              Coords
+            </button>
           </div>
+          {showCoords && (
+            <div style={{display:"flex",gap:6,justifyContent:"center",alignItems:"center",flexWrap:"wrap",marginBottom:6,padding:"8px 12px",background:"rgba(99,102,241,0.07)",borderRadius:8,border:"1px solid rgba(99,102,241,0.2)"}}>
+              <span style={{fontSize:11,color:"#94a3b8"}}>Lat</span>
+              <input value={latInput} onChange={function(e){setLatInput(e.target.value);}}
+                onKeyDown={function(e){if(e.key==="Enter")doManualCoords();}}
+                placeholder="-27.94" type="number" step="0.01"
+                style={{background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:6,padding:"5px 8px",color:"#e2e8f0",fontSize:12,width:90,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+              <span style={{fontSize:11,color:"#94a3b8"}}>Lon</span>
+              <input value={lonInput} onChange={function(e){setLonInput(e.target.value);}}
+                onKeyDown={function(e){if(e.key==="Enter")doManualCoords();}}
+                placeholder="153.41" type="number" step="0.01"
+                style={{background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:6,padding:"5px 8px",color:"#e2e8f0",fontSize:12,width:100,outline:"none",fontFamily:"'JetBrains Mono',monospace"}}/>
+              <button onClick={doManualCoords}
+                style={{background:"rgba(99,102,241,0.3)",border:"1px solid rgba(99,102,241,0.5)",borderRadius:6,padding:"5px 12px",color:"#a5b4fc",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                Go
+              </button>
+              <span style={{fontSize:10,color:"#475569"}}>−90 to 90 · −180 to 180</span>
+            </div>
+          )}
           <div style={{textAlign:"center",fontSize:12,color:"#94a3b8",marginBottom:4}}>
             <i className="fa-solid fa-map-pin" style={{fontSize:10,color:"#fbbf24",marginRight:5}}></i>
             <span style={{fontWeight:600,color:"#cbd5e1"}}>{loc}</span>
@@ -952,18 +1226,18 @@ function App() {
                         borderRadius: 10, padding: "8px 4px 6px",
                         transition:"background 0.2s",
                       }}>
-                        <span style={{fontSize:16,fontWeight:800,color:"hsl("+hue+",75%,55%)",fontFamily:"'JetBrains Mono',monospace",marginBottom:2,opacity:weekAnim?1:0,transition:"opacity 0.4s ease "+(i*0.06)+"s"}}>{score}</span>
-                        <span style={{fontSize:8,fontWeight:600,color:"hsl("+hue+",60%,45%)",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5,opacity:weekAnim?1:0,transition:"opacity 0.4s ease "+(i*0.06)+"s"}}>{scoreText(score)}</span>
-                        <div style={{width:"100%",maxWidth:50,height:weekAnim?barH:0,borderRadius:5,background:"hsl("+hue+",65%,"+(isSel?"42%":"32%")+")",transition:"height 0.6s cubic-bezier(0.34,1.56,0.64,1) "+(i*0.06)+"s, background 0.3s"}} />
-                        <span style={{fontSize:9,color:"#64748b",marginTop:4,fontFamily:"'JetBrains Mono',monospace",opacity:weekAnim?1:0,transition:"opacity 0.3s ease "+(i*0.06+0.3)+"s"}}>{d.bestTime}</span>
-                        <span style={{fontSize:10,fontWeight:isSel||d.isToday?700:500,color:isSel?"#efefef":d.isToday?"rgba(239,239,239,0.7)":"#94a3b8",marginTop:2,opacity:weekAnim?1:0,transition:"opacity 0.3s ease "+(i*0.06+0.3)+"s"}}>{dayName}</span>
+                        <span style={{fontSize:16,fontWeight:800,color:"hsl("+hue+",75%,55%)",fontFamily:"'JetBrains Mono',monospace",marginBottom:2,opacity:weekAnim?1:0,transition:"opacity 0.4s ease"}}>{score}</span>
+                        <span style={{fontSize:8,fontWeight:600,color:"hsl("+hue+",60%,45%)",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5,opacity:weekAnim?1:0,transition:"opacity 0.4s ease"}}>{scoreText(score)}</span>
+                        <div style={{width:"100%",maxWidth:50,height:weekAnim?barH:0,borderRadius:5,background:"hsl("+hue+",65%,"+(isSel?"42%":"32%")+")",transition:"height 0.6s cubic-bezier(0.34,1.56,0.64,1), background 0.3s"}} />
+                        <span style={{fontSize:9,color:"#64748b",marginTop:4,fontFamily:"'JetBrains Mono',monospace",opacity:weekAnim?1:0,transition:"opacity 0.35s ease 0.1s"}}>{d.bestTime}</span>
+                        <span style={{fontSize:10,fontWeight:isSel||d.isToday?700:500,color:isSel?"#efefef":d.isToday?"rgba(239,239,239,0.7)":"#94a3b8",marginTop:2,opacity:weekAnim?1:0,transition:"opacity 0.35s ease 0.1s"}}>{dayName}</span>
                       </div>
                     );
                   })}
                 </div>
               </div>
               {entries[selectedDay] && (
-                <DayCard key={entries[selectedDay][0]} date={entries[selectedDay][0]} hours={entries[selectedDay][1]} isToday={entries[selectedDay][0]===todayStr} useMph={useMph}/>
+                <DayCard key="daycard" date={entries[selectedDay][0]} hours={entries[selectedDay][1]} isToday={entries[selectedDay][0]===todayStr} useMph={useMph}/>
               )}
             </div>
           );
