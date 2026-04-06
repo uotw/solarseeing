@@ -106,18 +106,35 @@ The scoring model draws from:
 
 ## Validation
 
-The scoring model has been tested against one year of Solar Scintillation Monitor (SSM) data from St Véran Observatory, France (2930m altitude, Mar 2025–Mar 2026, n=1826 daytime hours). Key findings from morning hours (06-09 UTC, n=292):
+The scoring model has been tested against Solar Scintillation Monitor (SSM) data from two sites with very different characteristics. The dataset is limited and actively growing — if you have an SSM and are willing to share session logs, please open an issue or get in touch.
 
-| Variable | r vs seeing arcseconds |
-|----------|----------------------|
-| Sensible heat flux | +0.667 |
-| Thermal penalty (combined) | +0.639 |
-| PBL height | +0.604 |
-| 850 hPa wind speed | +0.412 |
-| Combined SHF+PBL (normalized) | +0.695 |
-| Full score (wind + thermals) | −0.185 |
+All correlations below are reported as r vs seeing quality (higher score = better predicted seeing, higher r = stronger agreement).
 
-Positive r values indicate the variable correctly predicts worse seeing (higher arcseconds). The composite score's negative r confirms higher scores predict better seeing. Correlation is moderate — consistent with published WRF-based Cn² forecast results (Quatresooz et al. achieved r≈0.53–0.56 at Tenerife using a full mesoscale model). St Véran at 2930m is not representative of typical backyard observer sites; low-altitude validation data would be very welcome.
+### St Véran Observatory, France (2930m altitude)
+
+One year of SSM data (Mar 2025–Mar 2026, n=1,826 daytime hours) provides the largest single validation dataset. Key findings from morning hours (06-09 UTC, n=292):
+
+| Variable | r vs seeing quality |
+|----------|---------------------|
+| Composite score (wind + thermals) | +0.185 |
+| Wind score alone | +0.026 |
+| Thermal penalty contribution | +0.639 |
+
+Correlation is moderate and consistent with published WRF-based Cn² forecast results — Quatresooz et al. achieved r≈0.53–0.56 at Tenerife using a full mesoscale model. The important caveat is that St Véran at 2930m sits above much of the planetary boundary layer, making it unrepresentative of most backyard sites. At altitude, the thermal terms are the dominant predictors; wind alone contributes very little.
+
+### Gold Coast, Queensland, Australia (sea level)
+
+Nine SSM sessions (Jan–Mar 2026, n=71 readings) provide the only low-altitude validation data. This site is subtropical, coastal, and effectively at sea level — far more representative of typical backyard observers.
+
+| Filter | n | Composite score r | Wind-only r |
+|--------|---|-------------------|-------------|
+| All hours | 71 | +0.455 | +0.382 |
+| Early morning only (AEST 07–09) | 48 | +0.496 | +0.149 |
+| Late morning (AEST 10–12) | 23 | +0.330 | +0.323 |
+
+At sea level the composite score performs substantially better than at the mountain site. The thermal terms contribute most in the early morning window — wind alone gives r=+0.149 before thermals develop, rising to r=+0.496 with the thermal penalty included. By late morning, once SHF exceeds ~400 W/m², the thermal penalty saturates and wind and composite scores converge. The early morning window (within ~4 hours of sunrise) consistently produces the strongest predictions at both sites.
+
+The Gold Coast dataset is small and the highest priority for the model is additional low-altitude SSM data from backyard sites worldwide.
 
 ## Tech Stack
 
